@@ -1,8 +1,8 @@
 String command = "";
 
 // Motor direction pins
-const int IN1 = 9;     
-const int IN2 = 10;
+const int IN1 = 5;     
+const int IN2 = 4;
 const int ENA = 6;
 
 void setup() {
@@ -15,7 +15,7 @@ void setup() {
   // Start stopped
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
-  //analogWrite(ENA, 255);
+  analogWrite(ENA, 255);
 }
 
 void loop() {
