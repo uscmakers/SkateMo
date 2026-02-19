@@ -15,7 +15,7 @@ void setup() {
   // Start stopped
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
-  //analogWrite(ENA, 255);
+  analogWrite(ENA, 255);
 }
 
 void loop() {
