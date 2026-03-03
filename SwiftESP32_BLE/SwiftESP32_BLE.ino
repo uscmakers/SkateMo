@@ -12,6 +12,13 @@
 BLECharacteristic* pCharacteristic = nullptr;  // Pointer to our characteristic, declared globally so loop() can access it
 bool deviceConnected = false;                  // Tracks whether a client is currently connected
 
+enum Command : char { 
+  FWD = 0x00,
+  BACK = 0x01,
+  LEFT = 0x02, 
+  RIGHT = 0x03,
+};
+
 // ServerCallbacks handles connection and disconnection events
 // We inherit from BLEServerCallbacks and override the two event functions
 class ServerCallbacks : public BLEServerCallbacks {
@@ -29,7 +36,7 @@ class ServerCallbacks : public BLEServerCallbacks {
 // CharacteristicCallbacks handles events on the characteristic itself
 // In this case, we only care about onWrite - when the client sends data to us
 class CharacteristicCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pCharacteristic) {   // Fires when client writes a value
+  void onWrite(BLECharacteristic* pCharacteristic)  {   // Fires when client writes a value
     String value = pCharacteristic->getValue();       // Use Arduino String, not std::string
     if (value.length() > 0) {                         // Only process if data isn't empty
       Serial.print("Received: ");
@@ -42,7 +49,7 @@ void setup() {
   Serial.begin(115200);              // Start Serial Monitor at 115200 baud rate for debugging output
   Serial.println("Starting BLE...");
 
-  BLEDevice::init("ESP32-Test");     // Initialize the BLE stack and set the device name (visible during scan)
+  BLEDevice::init("ESP32-Enum");     // Initialize the BLE stack and set the device name (visible during scan)
 
   BLEServer* pServer = BLEDevice::createServer();    // Create the BLE server (ESP32 is the peripheral)
   pServer->setCallbacks(new ServerCallbacks());       // Attach our connection/disconnection callback handlers
@@ -83,5 +90,41 @@ void loop() {
     Serial.print("Sent: ");
     Serial.println(msg);                        // Log what we sent to Serial Monitor
     delay(2000);                                // Wait 2 seconds before sending the next update
+  }
+}
+
+void handleCommand(char cmd) {
+  Serial.print("handleCommand: 0x");
+  Serial.println(cmd, HEX);
+
+  switch (cmd) {
+    case FWD:
+      Serial.println("FWD Received");
+      // write commands for straightening out the motor
+      break; 
+    case BACK:
+      Serial.println("BACK Received");
+      // straighten out and reverse wheels
+      break;
+    case RIGHT:
+      Serial.println("RIGHT Received");
+      // turn motor right
+      break;
+    case LEFT:
+      Serial.println("LEFT Received");
+      // turn motor left
+      break;
+    default:
+      Serial.println("Unknown Command");
+      break;
+  }
+
+  // send a one-byte ACK back by notifying (0x80 | cmd)
+  if (deviceConnected && pCharacteristic) { 
+    uint8_t ack = 0x80 | cmd;
+    pCharacteristic->setValue(&ack, 1);
+    pCharacteristic->notify();
+    Serial.print("Sent ACK: 0x");
+    Serial.println(ack, HEX);
   }
 }
