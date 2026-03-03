@@ -14,6 +14,7 @@ import networkx as nx
 import pandas as pd
 import random
 import matplotlib.pyplot as plt
+from InstructionsGenerator import generate_node_array, generate_instructions_array
 
 # --- 1) Load the CSV of campus roads ---
 CSV_PATH = "usc_campus_internal_edges.csv"
@@ -29,6 +30,21 @@ for _, row in df.iterrows():
 
 print(f"✅ Graph built with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
 
+# --- Build node-to-intersection-name mapping ---
+node_names = {}
+for node in G.nodes():
+    roads = set()
+    for neighbor in G.neighbors(node):
+        road_name = G[node][neighbor].get("name", "Unnamed")
+        if road_name != "Unnamed":
+            roads.add(road_name)
+    if len(roads) >= 2:
+        node_names[node] = " & ".join(sorted(roads))
+    elif len(roads) == 1:
+        node_names[node] = list(roads)[0]
+    else:
+        node_names[node] = f"({node[0]:.4f}, {node[1]:.4f})"
+
 # --- 3) Pick random start and end nodes ---
 nodes = list(G.nodes())
 start = random.choice(nodes)
@@ -43,6 +59,10 @@ print(f"Random End Node:   {end}")
 path = nx.shortest_path(G, source=start, target=end, weight="weight")
 path_length = nx.shortest_path_length(G, source=start, target=end, weight="weight")
 print(f"Shortest Path Distance: {path_length:.1f} ft")
+
+# --- Generate node array and instructions array ---
+nodes_array = generate_node_array(path, node_names)
+instructions_array = generate_instructions_array(path)
 
 # --- 5) Plot graph + highlight shortest path ---
 pos = {node: (node[1], node[0]) for node in G.nodes()}  # (lon, lat)
