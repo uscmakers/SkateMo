@@ -3,7 +3,6 @@
 #define RIGHT_LIMIT 1000 // this is extreme case (should never go past this)
 #define LEFT_RANGE // this is the left value it should turn to
 #define LEFT_LIMIT 200 // this is extreme case (should never go past this)
-
 #define HI_MID_RANGE //top of mid range
 #define LO_MID_RANGE //bottom of mid range
 
@@ -43,12 +42,13 @@ void loop() {
   Serial.print("Slide Pot value: ");
   Serial.println(value_slide_pot_a);
   
+  
   if (turn_right){ //this signal comes from the CS team
     //have to move motor to upper range
     if (poten_read < RIGHT_RANGE){
       moveRight(); //not sure if this moves it the right direction
     }
-    if (poten_read > RIGHT_LIMIT{
+    if (poten_read > RIGHT_LIMIT){
       moveLeft();
     }
     
@@ -70,11 +70,12 @@ void loop() {
     if (poten_read > LEFT_RANGE){
       moveLeft(); //not sure if this moves it the correct direction
     }
-    if (poten_read < LEFT_LIMIT{
+    if (poten_read < LEFT_LIMIT){
       moveRight();
     }
 
   }
+
 
   if (Serial.available()) {
     command = Serial.readStringUntil('\n');
@@ -90,7 +91,7 @@ void loop() {
   }
 }
 
-void moveLeft() { 
+void moveLeft() {  //left = up = forward
   digitalWrite(IN1, HIGH);
   digitalWrite(IN2, LOW);
   delay(250);
