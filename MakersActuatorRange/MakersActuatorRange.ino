@@ -44,10 +44,10 @@ void loop() {
   if (turn_right){ //this signal comes from the CS team
     //have to move motor to upper range
     if (poten_read < RIGHT_RANGE){
-      moveForward(); //not sure if this moves it the right direction
+      moveBackward(); //not sure if this moves it the right direction
     }
     if (poten_read > RIGHT_LIMIT{
-      moveBackward();
+      moveForward();
     }
     
   }
@@ -55,10 +55,10 @@ void loop() {
     //have to move motor to middle range
     // should be between the 
     if (poten_read > HI_MID_RANGE){
-      moveBackward();
+      moveForward();
     }
     if (poten_read < LO_MID_RANGE){
-      moveForward();
+      moveBackward();
     }
 
   }
@@ -66,10 +66,10 @@ void loop() {
   if(turn_left){
     //have to move motor to left range
     if (poten_read > LEFT_RANGE){
-      moveBackward(); //not sure if this moves it the correct direction
+      moveForward(); //not sure if this moves it the correct direction
     }
     if (poten_read < LEFT_LIMIT{
-      moveForward();
+      moveBackward();
     }
 
   }
