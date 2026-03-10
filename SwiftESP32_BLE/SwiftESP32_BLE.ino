@@ -3,6 +3,10 @@
 #include <BLEUtils.h>     // Utility helpers for BLE operations
 #include <BLE2902.h>      // Descriptor required to enable BLE notifications
 
+const int IN1 = 5;
+const int IN2 = 4;
+const int ENA = 6;
+
 // UUIDs uniquely identify your BLE service and characteristic
 // Think of the Service like a container, and the Characteristic as the data slot inside it
 // These can be any valid UUID - they just need to match what the client (nRF / Swift app) looks for
@@ -12,11 +16,11 @@
 BLECharacteristic* pCharacteristic = nullptr;  // Pointer to our characteristic, declared globally so loop() can access it
 bool deviceConnected = false;                  // Tracks whether a client is currently connected
 
-enum Command : char { 
-  FWD = 0x00,
-  BACK = 0x01,
-  LEFT = 0x02, 
-  RIGHT = 0x03,
+enum Command { 
+  FWD = 0,
+  BACK = 1,
+  LEFT = 2, 
+  RIGHT = 3,
 };
 
 // ServerCallbacks handles connection and disconnection events
@@ -46,6 +50,11 @@ class CharacteristicCallbacks : public BLECharacteristicCallbacks {
 };
 
 void setup() {
+  //set pin modes of the motor controller on ESP32
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(ENA, OUTPUT);
+
   Serial.begin(115200);              // Start Serial Monitor at 115200 baud rate for debugging output
   Serial.println("Starting BLE...");
 
@@ -128,3 +137,20 @@ void handleCommand(char cmd) {
     Serial.println(ack, HEX);
   }
 }
+
+  void Motor1_Forward(int Speed)  {      
+    digitalWrite(IN1,HIGH);       
+    digitalWrite(IN2,LOW);        
+    analogWrite(ENA,Speed); 
+  }    
+  
+  void Motor1_Backward(int Speed)  { 
+    digitalWrite(IN1,LOW);
+    digitalWrite(IN2,HIGH);        
+    analogWrite(ENA,Speed); 
+  } 
+  
+  void Motor1_Brake(){ 
+    digitalWrite(IN1,LOW);       
+    digitalWrite(IN2,LOW);  
+  } 
