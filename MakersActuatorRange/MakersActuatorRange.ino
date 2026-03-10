@@ -1,10 +1,16 @@
 #define PIN_SLIDE_POT_A A0
-#define RIGHT_RANGE 900 //this is the right value it should turn to
-#define RIGHT_LIMIT 1000 // this is extreme case (should never go past this)
-#define LEFT_RANGE // this is the left value it should turn to
-#define LEFT_LIMIT 200 // this is extreme case (should never go past this)
-#define HI_MID_RANGE //top of mid range
-#define LO_MID_RANGE //bottom of mid range
+#define RIGHT_RANGE 1000 //this is the right value it should turn to
+#define RIGHT_LIMIT 1020 // this is extreme case (should never go past this)
+#define LEFT_RANGE 1000 // this is the left value it should turn to
+#define LEFT_LIMIT 1020 // this is extreme case (should never go past this)
+#define HI_MID_RANGE 950//top of mid range
+#define LO_MID_RANGE 850//bottom of mid range
+
+/*
+1005 is where the wheel is stopping
+
+905 is straight --> make bounds 50 above, 50 below
+*/
 
 /*
 LEFT_LIMIT
