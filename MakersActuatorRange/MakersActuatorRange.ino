@@ -1,114 +1,117 @@
 #define PIN_SLIDE_POT_A A0
-#define RIGHT_RANGE 1000 //this is the right value it should turn to
-#define RIGHT_LIMIT 1020 // this is extreme case (should never go past this)
-#define LEFT_RANGE 1000 // this is the left value it should turn to
-#define LEFT_LIMIT 1020 // this is extreme case (should never go past this)
-#define HI_MID_RANGE 950//top of mid range
-#define LO_MID_RANGE 850//bottom of mid range
 
-/*
-1005 is where the wheel is stopping
+// Position targets
+#define RIGHT_TARGET 850
+#define LEFT_TARGET 275
+#define MID_TARGET 600   // straight
 
-905 is straight --> make bounds 50 above, 50 below
-*/
+// Safety limits (optional)
+#define RIGHT_LIMIT 950
+#define LEFT_LIMIT 100
 
-/*
-LEFT_LIMIT
-LEFT_RANGE
-LO_MID_RANGE
-HI_MID_RANGE
-RIGHT_RANGE
-RIGHT_LIMIT
-*/
+#define TOLERANCE 25   // deadband to prevent jitter
 
-String command = "";
-
-// Motor direction pins
-const int IN1 = 5;     
+// Motor pins
+const int IN1 = 5;
 const int IN2 = 4;
 const int ENA = 6;
 
+String command = "";
+
+// Current mode
+enum State {STOP, LEFT, RIGHT, STRAIGHT};
+State currentState = STOP;
 
 void setup() {
   Serial.begin(9600);
 
-  pinMode(PIN_SLIDE_POT_A, INPUT );
+  pinMode(PIN_SLIDE_POT_A, INPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(ENA, OUTPUT);
 
-  // Start stopped
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
-  analogWrite(ENA, 255);
+  analogWrite(ENA, 200); // speed (0–255)
+
+  stopMotor();
+
+  Serial.println("Type: left, right, straight, stop");
 }
 
 void loop() {
   int poten_read = analogRead(PIN_SLIDE_POT_A);
-  Serial.print("Slide Pot value: ");
-  Serial.println(value_slide_pot_a);
-  
-  
-  if (turn_right){ //this signal comes from the CS team
-    //have to move motor to upper range
-    if (poten_read < RIGHT_RANGE){
-      moveRight(); //not sure if this moves it the right direction
-    }
-    if (poten_read > RIGHT_LIMIT){
-      moveLeft();
-    }
-    
-  }
-  if (straight){
-    //have to move motor to middle range
-    // should be between the 
-    if (poten_read > HI_MID_RANGE){
-      moveLeft();
-    }
-    if (poten_read < LO_MID_RANGE){
-      moveRight();
-    }
 
-  }
+  // Debug print
+  Serial.print("Pot: ");
+  Serial.println(poten_read);
 
-  if(turn_left){
-    //have to move motor to left range
-    if (poten_read > LEFT_RANGE){
-      moveLeft(); //not sure if this moves it the correct direction
-    }
-    if (poten_read < LEFT_LIMIT){
-      moveRight();
-    }
-
-  }
-
-
+  // --- Handle Serial Input ---
   if (Serial.available()) {
     command = Serial.readStringUntil('\n');
     command.trim();
 
-    if (command == "up") {
-      moveLeft();
-    }
-
-    if (command == "down") {
-      moveRight();
+    if (command == "left") {
+      currentState = LEFT;
+    } 
+    else if (command == "right") {
+      currentState = RIGHT;
+    } 
+    else if (command == "straight") {
+      currentState = STRAIGHT;
+    } 
+    else if (command == "stop") {
+      currentState = STOP;
     }
   }
+
+  // --- Determine target ---
+  int target = poten_read; // default (no movement)
+
+  if (currentState == LEFT) {
+    target = LEFT_TARGET;
+  } 
+  else if (currentState == RIGHT) {
+    target = RIGHT_TARGET;
+  } 
+  else if (currentState == STRAIGHT) {
+    target = MID_TARGET;
+  }
+
+  // --- Control Logic ---
+  if (currentState == STOP) {
+    stopMotor();
+  } 
+  else {
+    if (poten_read < target - TOLERANCE) {
+      moveRight();   // adjust direction if needed
+    } 
+    else if (poten_read > target + TOLERANCE) {
+      moveLeft();
+    } 
+    else {
+      stopMotor();   // within range
+    }
+  }
+
+  // --- Safety Clamp ---
+  if (poten_read > RIGHT_LIMIT) {
+    moveLeft();
+  }
+  if (poten_read < LEFT_LIMIT) {
+    moveRight();
+  }
+
+  delay(50); // small delay for stability
 }
 
-void moveLeft() {  //left = up = forward
+// --- Motor Functions ---
+void moveLeft() {
   digitalWrite(IN1, HIGH);
   digitalWrite(IN2, LOW);
-  delay(250);
-  stopMotor();
 }
 
-void moveRight() {  //backward = down = right
+void moveRight() {
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, HIGH);
-  delay(250);
-  stopMotor();
 }
 
 void stopMotor() {
