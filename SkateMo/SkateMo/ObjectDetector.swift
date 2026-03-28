@@ -20,8 +20,17 @@ class ObjectDetector: ObservableObject {
     private let detectionQueue = DispatchQueue(label: "detectionQueue", qos: .userInitiated)
     private let confidenceThreshold: Float = 0.5
 
-    // Only detect these classes
-    private let allowedClasses: Set<String> = ["person", "car"]
+    // Classes relevant to obstacle detection for sidewalk/campus riding.
+    private let allowedClasses: Set<String> = [
+        "person",
+        "car",
+        "bicycle",
+        "motorcycle",
+        "bus",
+        "truck",
+        "dog",
+        "skateboard"
+    ]
 
     // COCO class labels (80 classes)
     private let cocoLabels = [
