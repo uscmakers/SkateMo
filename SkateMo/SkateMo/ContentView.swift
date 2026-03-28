@@ -2,30 +2,39 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
-struct Pin: Identifiable {
-    let id = UUID()
-    let coordinate: CLLocationCoordinate2D
-}
-
 struct ContentView: View {
     @State private var selectedTab = 0
+    @StateObject private var rideSession = RideSessionManager()
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            MapPageView()
+            MapPageView(
+                rideSession: rideSession,
+                locationManager: rideSession.locationManager,
+                navigationManager: rideSession.navigationManager
+            )
                 .tag(0)
 
-            CameraView()
+            CameraView(
+                rideSession: rideSession,
+                cameraManager: rideSession.cameraManager,
+                objectDetector: rideSession.objectDetector,
+                obstacleEvaluator: rideSession.obstacleEvaluator
+            )
                 .tag(1)
         }
         .tabViewStyle(.page(indexDisplayMode: .automatic))
         .ignoresSafeArea()
+        .onAppear {
+            rideSession.activateServicesIfNeeded()
+        }
     }
 }
 
 struct MapPageView: View {
-    @StateObject private var locationManager = LocationManager()
-    @StateObject private var navigationManager = NavigationManager()
+    @ObservedObject var rideSession: RideSessionManager
+    @ObservedObject var locationManager: LocationManager
+    @ObservedObject var navigationManager: NavigationManager
 
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(
@@ -33,11 +42,6 @@ struct MapPageView: View {
             span: MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
         )
     )
-
-    @State private var rideStarted = false
-    @State private var isSelectingDestination = false
-    @State private var destinationPin: Pin? = nil
-    @State private var rideActive = false
 
     var body: some View {
         ZStack {
@@ -58,24 +62,31 @@ struct MapPageView: View {
                         }
                     }
 
-                    if let destinationPin {
+                    if let destinationCoordinate = rideSession.destinationCoordinate {
                         Marker("Destination",
                                systemImage: "mappin.and.ellipse",
-                               coordinate: destinationPin.coordinate)
+                               coordinate: destinationCoordinate)
                     }
                 }
                 .onTapGesture { location in
-                    guard rideStarted, isSelectingDestination else { return }
+                    guard rideSession.rideStarted, rideSession.isSelectingDestination else { return }
 
                     if let coord = proxy.convert(location, from: .local) {
-                        destinationPin = Pin(coordinate: coord)
-                        isSelectingDestination = false
+                        rideSession.setDestination(coord)
                     }
                 }
             }
 
             // UI OVERLAY
             VStack {
+                RideCommandBanner(
+                    command: rideSession.effectiveCommand,
+                    title: rideSession.effectiveCommandText,
+                    subtitle: rideSession.commandStatusText
+                )
+                .padding(.top, 50)
+                .padding(.horizontal)
+
                 // COORDINATES DISPLAY AT TOP
                 if let location = locationManager.location {
                     VStack(spacing: 4) {
@@ -91,7 +102,7 @@ struct MapPageView: View {
                     .padding(12)
                     .background(.ultraThinMaterial)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .padding(.top, 50)
+                    .padding(.top, 8)
                 } else {
                     Text("Acquiring location...")
                         .font(.caption)
@@ -99,7 +110,7 @@ struct MapPageView: View {
                         .padding(12)
                         .background(.ultraThinMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .padding(.top, 50)
+                        .padding(.top, 8)
                 }
 
                 // Swipe hint
@@ -117,9 +128,9 @@ struct MapPageView: View {
 
                 Spacer()
 
-                if !rideStarted {
+                if !rideSession.rideStarted {
                     Button("Start Ride") {
-                        rideStarted = true
+                        rideSession.beginRideSetup()
                     }
                     .font(.headline)
                     .padding()
@@ -130,8 +141,8 @@ struct MapPageView: View {
                     .padding()
                 } else {
                     VStack(spacing: 8) {
-                        Button(destinationPin == nil ? "Set Destination" : "Change Destination") {
-                            isSelectingDestination = true
+                        Button(rideSession.destinationCoordinate == nil ? "Set Destination" : "Change Destination") {
+                            rideSession.beginDestinationSelection()
                         }
                         .font(.headline)
                         .padding()
@@ -140,58 +151,23 @@ struct MapPageView: View {
                         .foregroundColor(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 16))
 
-                        if destinationPin != nil {
-                            Button(rideActive ? "Riding..." : "Start") {
-                                rideActive = true
-                                print("Ride started with destination: \(String(describing: destinationPin?.coordinate))")
-                                startNavigationWithSampleRoute()
+                        if rideSession.destinationCoordinate != nil {
+                            Button(rideSession.rideActive ? "Riding..." : "Start") {
+                                rideSession.startRide()
                             }
                             .font(.headline)
                             .padding()
                             .frame(maxWidth: .infinity)
-                            .background(rideActive ? Color.gray : Color.orange)
+                            .background(rideSession.rideActive ? Color.gray : Color.orange)
                             .foregroundColor(.white)
                             .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .disabled(rideActive)
+                            .disabled(rideSession.rideActive)
                         }
                     }
                     .padding()
                 }
             }
         }
-        .onAppear {
-            locationManager.requestPermission()
-            locationManager.startUpdating()
-
-            // Wire up location updates to navigation manager
-            locationManager.onLocationUpdate = { location in
-                navigationManager.updateLocation(location)
-            }
-        }
-    }
-
-    // Start navigation with sample waypoints for testing
-    // In production, these would come from path calculation
-    private func startNavigationWithSampleRoute() {
-        let sampleWaypoints: [Waypoint] = [
-            Waypoint(
-                name: "Start Point",
-                coordinate: CLLocationCoordinate2D(latitude: 34.0211, longitude: -118.2870),
-                instruction: "Start"
-            ),
-            Waypoint(
-                name: "West 34th & Watt Way",
-                coordinate: CLLocationCoordinate2D(latitude: 34.0195, longitude: -118.2879),
-                instruction: "Right"
-            ),
-            Waypoint(
-                name: "Destination",
-                coordinate: destinationPin?.coordinate ?? CLLocationCoordinate2D(latitude: 34.0185, longitude: -118.2879),
-                instruction: "Destination"
-            )
-        ]
-
-        navigationManager.startNavigation(with: sampleWaypoints)
     }
 }
 

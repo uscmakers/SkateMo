@@ -5,9 +5,10 @@
 import SwiftUI
 
 struct CameraView: View {
-    @StateObject private var cameraManager = CameraManager()
-    @StateObject private var objectDetector = ObjectDetector()
-    @StateObject private var obstacleEvaluator = ObstacleEvaluator()
+    @ObservedObject var rideSession: RideSessionManager
+    @ObservedObject var cameraManager: CameraManager
+    @ObservedObject var objectDetector: ObjectDetector
+    @ObservedObject var obstacleEvaluator: ObstacleEvaluator
 
     var body: some View {
         GeometryReader { geometry in
@@ -21,7 +22,7 @@ struct CameraView: View {
                         .clipped()
                 } else {
                     Color.black
-                    Text("Starting camera...")
+                    Text(rideSession.rideActive ? "Starting camera..." : "Start a ride to activate camera safety monitoring.")
                         .foregroundColor(.white)
                 }
 
@@ -42,6 +43,14 @@ struct CameraView: View {
 
                 // Status + detection overlay
                 VStack {
+                    RideCommandBanner(
+                        command: rideSession.effectiveCommand,
+                        title: rideSession.effectiveCommandText,
+                        subtitle: rideSession.commandStatusText
+                    )
+                    .padding(.top, 50)
+                    .padding(.horizontal)
+
                     HStack {
                         Text("\(objectDetector.detections.count) objects")
                             .font(.caption)
@@ -74,8 +83,17 @@ struct CameraView: View {
                         }
                         Spacer()
                     }
-                    .padding(.top, 50)
+                    .padding(.top, 8)
                     .padding(.horizontal)
+
+                    Text(rideSession.effectiveCommandSource.displayText)
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.black.opacity(0.35))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal)
 
                     HStack {
                         if let nearest = obstacleEvaluator.nearestObstacleDistanceMeters {
@@ -102,18 +120,6 @@ struct CameraView: View {
             }
         }
         .ignoresSafeArea()
-        .onReceive(objectDetector.$detections) { detections in
-            obstacleEvaluator.update(with: detections)
-        }
-        .onAppear {
-            cameraManager.onFrameCaptured = { pixelBuffer in
-                objectDetector.detect(pixelBuffer: pixelBuffer)
-            }
-            cameraManager.start()
-        }
-        .onDisappear {
-            cameraManager.stop()
-        }
     }
 }
 
@@ -228,5 +234,5 @@ private func aspectFillRect(for normalizedRect: CGRect, in viewSize: CGSize, ima
 }
 
 #Preview {
-    CameraView()
+    ContentView()
 }

@@ -11,7 +11,7 @@ import CoreLocation
 struct Waypoint {
     let name: String
     let coordinate: CLLocationCoordinate2D
-    let instruction: String  // "Start", "Left", "Right", "Intersection", "Destination"
+    let action: NavigationAction
 }
 
 class NavigationManager: ObservableObject {
@@ -30,6 +30,7 @@ class NavigationManager: ObservableObject {
 
     // Current instruction to display
     @Published var currentInstruction: String = ""
+    @Published var currentBoardCommand: BoardCommand = .idle
 
     // Distance to next waypoint
     @Published var distanceToNextWaypoint: CLLocationDistance = 0
@@ -45,12 +46,15 @@ class NavigationManager: ObservableObject {
         self.waypoints = waypoints
         self.currentWaypointIndex = 0
         self.isNavigating = true
+        self.distanceToNextWaypoint = 0
+        self.currentBoardCommand = .forward
 
         // Show the first instruction (Start)
         let firstWaypoint = waypoints[0]
-        self.currentInstruction = firstWaypoint.instruction
+        self.currentInstruction = firstWaypoint.action.instructionText
         print("[NavigationManager] Navigation started")
-        print("[NavigationManager] Instruction: \(firstWaypoint.instruction) at \(firstWaypoint.name)")
+        print("[NavigationManager] Instruction: \(firstWaypoint.action.instructionText) at \(firstWaypoint.name)")
+        print("[NavigationManager] Board command: \(currentBoardCommand.displayText)")
 
         // Move to next waypoint since we're starting from the first one
         if waypoints.count > 1 {
@@ -64,6 +68,8 @@ class NavigationManager: ObservableObject {
         currentWaypointIndex = 0
         waypoints = []
         currentInstruction = ""
+        currentBoardCommand = .idle
+        distanceToNextWaypoint = 0
         print("[NavigationManager] Navigation stopped")
     }
 
@@ -91,26 +97,26 @@ class NavigationManager: ObservableObject {
     // MARK: - Private Helpers
 
     private func triggerInstruction(for waypoint: Waypoint) {
-        currentInstruction = waypoint.instruction
+        currentInstruction = waypoint.action.instructionText
+        currentBoardCommand = waypoint.action.boardCommand
 
         // Print to console as requested
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print("[NavigationManager] REACHED WAYPOINT: \(waypoint.name)")
-        print("[NavigationManager] INSTRUCTION: \(waypoint.instruction)")
+        print("[NavigationManager] INSTRUCTION: \(waypoint.action.instructionText)")
+        print("[NavigationManager] Board command: \(currentBoardCommand.displayText)")
 
-        switch waypoint.instruction {
-        case "Start":
+        switch waypoint.action {
+        case .start:
             print("[NavigationManager] → Begin your journey")
-        case "Left":
+        case .left:
             print("[NavigationManager] ← Turn LEFT")
-        case "Right":
+        case .right:
             print("[NavigationManager] → Turn RIGHT")
-        case "Intersection":
+        case .straight:
             print("[NavigationManager] ↑ Go STRAIGHT through intersection")
-        case "Destination":
+        case .destination:
             print("[NavigationManager] ★ You have arrived at your DESTINATION!")
-        default:
-            print("[NavigationManager] Continue on path")
         }
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     }
@@ -119,6 +125,7 @@ class NavigationManager: ObservableObject {
         currentWaypointIndex += 1
 
         if currentWaypointIndex >= waypoints.count {
+            currentBoardCommand = .arrived
             print("[NavigationManager] Navigation complete - all waypoints reached!")
             isNavigating = false
         } else {
