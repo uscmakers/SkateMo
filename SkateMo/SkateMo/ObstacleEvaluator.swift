@@ -56,6 +56,8 @@ final class ObstacleEvaluator: ObservableObject {
     private let cautionFrameThreshold = 2
     private let clearFrameThreshold = 2
     private let assumedSpeedMetersPerSecond = 3.0
+    private let stopDistanceMeters = 1.8
+    private let cautionDistanceMeters = 3.5
 
     private var highRiskFrames = 0
     private var cautionFrames = 0
@@ -111,21 +113,26 @@ final class ObstacleEvaluator: ObservableObject {
         let overlapRatio = overlapArea / boxArea
 
         let insideCorridor = overlapRatio > 0.25
-        let proximityScore = clamp(1.0 - Double(box.midY), min: 0.0, max: 1.0)
-        let sizeScore = clamp(Double(boxArea) * 7.0, min: 0.0, max: 1.0)
-        let confidenceScore = clamp(Double(detection.confidence), min: 0.0, max: 1.0)
-        let corridorWeight = insideCorridor ? clamp(overlapRatio, min: 0.3, max: 1.0) : 0.0
-
-        let riskScore = (0.5 * proximityScore + 0.3 * sizeScore + 0.2 * confidenceScore) * corridorWeight
         let estimatedDistance = estimateDistance(fromNormalizedHeight: Double(box.height))
         let ttc = estimatedDistance / assumedSpeedMetersPerSecond
+        let bottomEdgeScore = clamp(Double(box.maxY), min: 0.0, max: 1.0)
+        let sizeScore = clamp(Double(boxArea) * 6.0, min: 0.0, max: 1.0)
+        let confidenceScore = clamp(Double(detection.confidence), min: 0.0, max: 1.0)
+        let corridorScore = insideCorridor ? clamp(overlapRatio, min: 0.35, max: 1.0) : 0.0
+
+        // Keep confidence as a weak signal so a crisp full-body box does not dominate the state.
+        let riskScore = (0.45 * bottomEdgeScore + 0.4 * sizeScore + 0.15 * confidenceScore) * corridorScore
 
         let severity: ObstacleSeverity
         if !insideCorridor {
             severity = .low
-        } else if riskScore >= 0.60 || estimatedDistance <= 2.5 {
+        } else if estimatedDistance <= stopDistanceMeters {
             severity = .high
-        } else if riskScore >= 0.35 || estimatedDistance <= 5.0 {
+        } else if estimatedDistance <= cautionDistanceMeters {
+            severity = .caution
+        } else if riskScore >= 0.72 {
+            severity = .high
+        } else if riskScore >= 0.45 {
             severity = .caution
         } else {
             severity = .low
@@ -142,7 +149,7 @@ final class ObstacleEvaluator: ObservableObject {
 
     private func estimateDistance(fromNormalizedHeight height: Double) -> Double {
         let safeHeight = max(height, 0.05)
-        return clamp(3.2 / safeHeight, min: 0.8, max: 30.0)
+        return clamp(1.15 / safeHeight, min: 0.5, max: 20.0)
     }
 
     private func normalizedArea(of rect: CGRect) -> Double {

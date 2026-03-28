@@ -25,13 +25,18 @@ struct CameraView: View {
                         .foregroundColor(.white)
                 }
 
-                ForwardCorridorOverlay(viewSize: geometry.size, state: obstacleEvaluator.state)
+                ForwardCorridorOverlay(
+                    viewSize: geometry.size,
+                    imageSize: cameraManager.frameSize,
+                    state: obstacleEvaluator.state
+                )
 
                 // Bounding boxes overlay
                 ForEach(obstacleEvaluator.evaluatedObstacles) { obstacle in
                     BoundingBoxView(
                         obstacle: obstacle,
-                        viewSize: geometry.size
+                        viewSize: geometry.size,
+                        imageSize: cameraManager.frameSize
                     )
                 }
 
@@ -115,9 +120,10 @@ struct CameraView: View {
 struct BoundingBoxView: View {
     let obstacle: EvaluatedObstacle
     let viewSize: CGSize
+    let imageSize: CGSize
 
     var body: some View {
-        let rect = convertBoundingBox(obstacle.detection.boundingBox, to: viewSize)
+        let rect = convertBoundingBox(obstacle.detection.boundingBox, to: viewSize, imageSize: imageSize)
 
         ZStack(alignment: .topLeading) {
             // Bounding box rectangle
@@ -152,21 +158,24 @@ struct BoundingBoxView: View {
 
     // Convert normalized Vision coordinates to view coordinates
     // Vision uses bottom-left origin, SwiftUI uses top-left
-    private func convertBoundingBox(_ boundingBox: CGRect, to viewSize: CGSize) -> CGRect {
-        let x = boundingBox.minX * viewSize.width
-        let y = (1 - boundingBox.maxY) * viewSize.height  // Flip Y axis
-        let width = boundingBox.width * viewSize.width
-        let height = boundingBox.height * viewSize.height
-        return CGRect(x: x, y: y, width: width, height: height)
+    private func convertBoundingBox(_ boundingBox: CGRect, to viewSize: CGSize, imageSize: CGSize) -> CGRect {
+        let normalizedRect = CGRect(
+            x: boundingBox.minX,
+            y: 1 - boundingBox.maxY,
+            width: boundingBox.width,
+            height: boundingBox.height
+        )
+        return aspectFillRect(for: normalizedRect, in: viewSize, imageSize: imageSize)
     }
 }
 
 struct ForwardCorridorOverlay: View {
     let viewSize: CGSize
+    let imageSize: CGSize
     let state: ObstacleState
 
     var body: some View {
-        let rect = convertBoundingBox(ObstacleEvaluator.corridorRect, to: viewSize)
+        let rect = convertBoundingBox(ObstacleEvaluator.corridorRect, to: viewSize, imageSize: imageSize)
 
         ZStack {
             Rectangle()
@@ -183,13 +192,39 @@ struct ForwardCorridorOverlay: View {
         .allowsHitTesting(false)
     }
 
-    private func convertBoundingBox(_ boundingBox: CGRect, to viewSize: CGSize) -> CGRect {
-        let x = boundingBox.minX * viewSize.width
-        let y = (1 - boundingBox.maxY) * viewSize.height
-        let width = boundingBox.width * viewSize.width
-        let height = boundingBox.height * viewSize.height
-        return CGRect(x: x, y: y, width: width, height: height)
+    private func convertBoundingBox(_ boundingBox: CGRect, to viewSize: CGSize, imageSize: CGSize) -> CGRect {
+        let normalizedRect = CGRect(
+            x: boundingBox.minX,
+            y: 1 - boundingBox.maxY,
+            width: boundingBox.width,
+            height: boundingBox.height
+        )
+        return aspectFillRect(for: normalizedRect, in: viewSize, imageSize: imageSize)
     }
+}
+
+private func aspectFillRect(for normalizedRect: CGRect, in viewSize: CGSize, imageSize: CGSize) -> CGRect {
+    guard viewSize.width > 0, viewSize.height > 0, imageSize.width > 0, imageSize.height > 0 else {
+        return CGRect(
+            x: normalizedRect.minX * viewSize.width,
+            y: normalizedRect.minY * viewSize.height,
+            width: normalizedRect.width * viewSize.width,
+            height: normalizedRect.height * viewSize.height
+        )
+    }
+
+    let scale = max(viewSize.width / imageSize.width, viewSize.height / imageSize.height)
+    let displayedWidth = imageSize.width * scale
+    let displayedHeight = imageSize.height * scale
+    let xOffset = (viewSize.width - displayedWidth) / 2
+    let yOffset = (viewSize.height - displayedHeight) / 2
+
+    return CGRect(
+        x: xOffset + normalizedRect.minX * displayedWidth,
+        y: yOffset + normalizedRect.minY * displayedHeight,
+        width: normalizedRect.width * displayedWidth,
+        height: normalizedRect.height * displayedHeight
+    )
 }
 
 #Preview {

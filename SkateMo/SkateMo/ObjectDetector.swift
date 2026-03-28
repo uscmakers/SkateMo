@@ -76,7 +76,7 @@ class ObjectDetector: ObservableObject {
 
             if let request = self.request {
                 // Use YOLO model
-                let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+                let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
                 try? handler.perform([request])
             } else {
                 // Fallback: detect humans for prototyping
@@ -86,7 +86,7 @@ class ObjectDetector: ObservableObject {
     }
 
     private func detectWithBuiltIn(pixelBuffer: CVPixelBuffer) {
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
 
         let humanRequest = VNDetectHumanRectanglesRequest { [weak self] request, error in
             guard let results = request.results as? [VNHumanObservation] else { return }

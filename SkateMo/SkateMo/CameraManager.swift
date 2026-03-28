@@ -4,6 +4,7 @@
 //
 import AVFoundation
 import CoreImage
+import UIKit
 
 enum CameraLensMode: String {
     case standard = "1x"
@@ -12,6 +13,7 @@ enum CameraLensMode: String {
 
 class CameraManager: NSObject, ObservableObject {
     @Published var frame: CGImage?
+    @Published private(set) var frameSize: CGSize = .zero
     @Published private(set) var lensMode: CameraLensMode = .standard
     @Published private(set) var isUltraWideAvailable = false
 
@@ -19,13 +21,29 @@ class CameraManager: NSObject, ObservableObject {
     private let videoOutput = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "cameraSessionQueue")
     private var videoInput: AVCaptureDeviceInput?
+    private var deviceOrientationObserver: NSObjectProtocol?
 
     var onFrameCaptured: ((CVPixelBuffer) -> Void)?
 
     override init() {
         super.init()
         isUltraWideAvailable = AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back) != nil
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        deviceOrientationObserver = NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateVideoOrientation()
+        }
         setupCamera()
+    }
+
+    deinit {
+        if let observer = deviceOrientationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        UIDevice.current.endGeneratingDeviceOrientationNotifications()
     }
 
     private func setupCamera() {
@@ -36,6 +54,7 @@ class CameraManager: NSObject, ObservableObject {
 
     func start() {
         sessionQueue.async { [weak self] in
+            self?.updateVideoOrientation()
             self?.captureSession.startRunning()
         }
     }
@@ -60,7 +79,7 @@ class CameraManager: NSObject, ObservableObject {
 
     private func configureSession(for mode: CameraLensMode, includeOutputSetup: Bool) {
         captureSession.beginConfiguration()
-        defer { captureSession.endConfiguration() }
+        defer { captureSession.commitConfiguration() }
 
         if includeOutputSetup {
             captureSession.sessionPreset = .hd1280x720
@@ -98,8 +117,8 @@ class CameraManager: NSObject, ObservableObject {
         }
 
         if let connection = videoOutput.connection(with: .video),
-           connection.isVideoRotationAngleSupported(90) {
-            connection.videoRotationAngle = 90
+           connection.isVideoRotationAngleSupported(rotationAngle(for: UIDevice.current.orientation)) {
+            connection.videoRotationAngle = rotationAngle(for: UIDevice.current.orientation)
         }
     }
 
@@ -112,6 +131,32 @@ class CameraManager: NSObject, ObservableObject {
             return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
         case .standard:
             return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+        }
+    }
+
+    private func updateVideoOrientation() {
+        sessionQueue.async { [weak self] in
+            guard let self = self,
+                  let connection = self.videoOutput.connection(with: .video) else { return }
+
+            let angle = self.rotationAngle(for: UIDevice.current.orientation)
+            guard connection.isVideoRotationAngleSupported(angle) else { return }
+            connection.videoRotationAngle = angle
+        }
+    }
+
+    private func rotationAngle(for orientation: UIDeviceOrientation) -> CGFloat {
+        switch orientation {
+        case .portrait:
+            return 90
+        case .landscapeLeft:
+            return 0
+        case .landscapeRight:
+            return 180
+        case .portraitUpsideDown:
+            return 270
+        default:
+            return 90
         }
     }
 }
@@ -130,6 +175,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         DispatchQueue.main.async { [weak self] in
             self?.frame = cgImage
+            self?.frameSize = CGSize(width: cgImage.width, height: cgImage.height)
         }
     }
 }
