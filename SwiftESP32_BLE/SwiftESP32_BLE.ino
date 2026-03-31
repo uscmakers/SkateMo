@@ -3,9 +3,9 @@
 #include <BLEUtils.h>     // Utility helpers for BLE operations
 #include <BLE2902.h>      // Descriptor required to enable BLE notifications
 
-const int IN1 = 5;
-const int IN2 = 4;
-const int ENA = 6;
+const int IN1 = 25;
+const int IN2 = 26;
+const int ENA = 27;
 
 // UUIDs uniquely identify your BLE service and characteristic
 // Think of the Service like a container, and the Characteristic as the data slot inside it
@@ -13,8 +13,10 @@ const int ENA = 6;
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789012"
 #define CHARACTERISTIC_UUID "87654321-4321-4321-4321-210987654321"
 
+
 BLECharacteristic* pCharacteristic = nullptr;  // Pointer to our characteristic, declared globally so loop() can access it
 bool deviceConnected = false;                  // Tracks whether a client is currently connected
+void handleCommand(char cmd);
 
 enum Command { 
   FWD = 0,
@@ -40,16 +42,18 @@ class ServerCallbacks : public BLEServerCallbacks {
 // CharacteristicCallbacks handles events on the characteristic itself
 // In this case, we only care about onWrite - when the client sends data to us
 class CharacteristicCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pCharacteristic)  {   // Fires when client writes a value
-    String value = pCharacteristic->getValue();       // Use Arduino String, not std::string
-    if (value.length() > 0) {                         // Only process if data isn't empty
+  void onWrite(BLECharacteristic* pCharacteristic) {
+    String value = pCharacteristic->getValue();
+    if (value.length() > 0) {
       Serial.print("Received: ");
-      Serial.println(value);                          // Arduino String works directly with Serial.println, no .c_str() needed
+      Serial.println(value);
+      handleCommand((char)value[0]); // Dispatch the first byte as a command
     }
   }
 };
 
 void setup() {
+
   //set pin modes of the motor controller on ESP32
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -110,10 +114,12 @@ void handleCommand(char cmd) {
     case FWD:
       Serial.println("FWD Received");
       // write commands for straightening out the motor
+      Motor1_Forward();
       break; 
     case BACK:
       Serial.println("BACK Received");
       // straighten out and reverse wheels
+      Motor1_Backward();
       break;
     case RIGHT:
       Serial.println("RIGHT Received");
