@@ -44,9 +44,9 @@ struct CameraView: View {
                 // Status + detection overlay
                 VStack {
                     RideCommandBanner(
-                        command: rideSession.effectiveCommand,
-                        title: rideSession.effectiveCommandText,
-                        subtitle: rideSession.commandStatusText
+                        command: rideSession.bannerCommand,
+                        title: rideSession.bannerTitle,
+                        subtitle: rideSession.bannerSubtitle
                     )
                     .padding(.top, 50)
                     .padding(.horizontal)

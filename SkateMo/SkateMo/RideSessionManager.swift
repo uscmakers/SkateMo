@@ -18,6 +18,9 @@ final class RideSessionManager: ObservableObject {
     @Published var isSelectingDestination = false
     @Published var rideActive = false
     @Published var destinationCoordinate: CLLocationCoordinate2D?
+    @Published private(set) var routeCoordinates: [CLLocationCoordinate2D] = []
+    @Published private(set) var routeStatusText = "Select a destination to build a route."
+    @Published private(set) var routeErrorMessage: String?
 
     @Published private(set) var effectiveCommand: BoardCommand = .idle
     @Published private(set) var effectiveCommandSource: BoardCommandSource = .system
@@ -25,9 +28,13 @@ final class RideSessionManager: ObservableObject {
     @Published private(set) var isVisionOverrideActive = false
     @Published private(set) var lastNavigationCommand: BoardCommand = .idle
     @Published private(set) var obstacleStatusText = "Path clear"
+    @Published private(set) var bannerCommand: BoardCommand = .idle
+    @Published private(set) var bannerTitle = BoardCommand.idle.displayText
+    @Published private(set) var bannerSubtitle = "Source: System. Select a destination to build a route."
 
     private var cancellables = Set<AnyCancellable>()
     private var hasActivatedServices = false
+    private let routePlanner: CampusRoutePlanner?
 
     init(
         locationManager: LocationManager = LocationManager(),
@@ -41,9 +48,11 @@ final class RideSessionManager: ObservableObject {
         self.cameraManager = cameraManager
         self.objectDetector = objectDetector
         self.obstacleEvaluator = obstacleEvaluator
+        self.routePlanner = try? CampusRoutePlanner()
 
         configureServices()
         configureBindings()
+        updateBannerPresentation()
     }
 
     func activateServicesIfNeeded() {
@@ -66,38 +75,71 @@ final class RideSessionManager: ObservableObject {
     func setDestination(_ coordinate: CLLocationCoordinate2D) {
         destinationCoordinate = coordinate
         isSelectingDestination = false
+        previewRouteIfPossible()
     }
 
     func startRide() {
         guard let destinationCoordinate else { return }
+        guard let currentLocation = locationManager.location?.coordinate else {
+            routeErrorMessage = "Current GPS location is not available yet."
+            routeStatusText = "Waiting for current location."
+            print("[RideSession] Cannot start route: current GPS location unavailable.")
+            return
+        }
+        guard let routePlanner else {
+            routeErrorMessage = RoutePlanningError.graphUnavailable.localizedDescription
+            routeStatusText = "Route graph unavailable."
+            print("[RideSession] Cannot start route: USC graph missing from bundle.")
+            return
+        }
+
+        let plannedRoute: PlannedRoute
+        do {
+            plannedRoute = try routePlanner.route(
+                from: currentLocation,
+                to: destinationCoordinate,
+                travelHeadingDegrees: locationManager.travelHeadingDegrees
+            )
+        } catch {
+            routeErrorMessage = error.localizedDescription
+            routeStatusText = error.localizedDescription
+            rideActive = false
+            print("[RideSession] Route planning failed: \(error.localizedDescription)")
+            return
+        }
 
         rideActive = true
         isSelectingDestination = false
-        navigationManager.startNavigation(with: sampleWaypoints(to: destinationCoordinate))
+        routeCoordinates = plannedRoute.coordinates
+        routeErrorMessage = nil
+        routeStatusText = String(
+            format: "Route ready: %.0fft, %d nav steps over %d path nodes",
+            plannedRoute.totalDistanceFeet,
+            plannedRoute.navigationStepCount,
+            plannedRoute.coordinates.count
+        )
+        navigationManager.startNavigation(with: plannedRoute.waypoints)
         cameraManager.start()
         updateEffectiveCommand()
 
         print("[RideSession] Ride started with destination: \(destinationCoordinate.latitude), \(destinationCoordinate.longitude)")
+        print("[RideSession] Planned \(plannedRoute.navigationStepCount) navigation steps over \(plannedRoute.coordinates.count) graph nodes and \(plannedRoute.totalDistanceFeet) ft")
+        print("[RideSession] Start edge: \(plannedRoute.startEdgeRoadName) [\(plannedRoute.startEdgeHighwayTypes.joined(separator: ", "))]")
+        print("[RideSession] Destination edge: \(plannedRoute.endEdgeRoadName) [\(plannedRoute.endEdgeHighwayTypes.joined(separator: ", "))]")
+        if let firstSegmentBearingDegrees = plannedRoute.firstSegmentBearingDegrees {
+            print(String(format: "[RideSession] First segment bearing: %.1f degrees", firstSegmentBearingDegrees))
+        }
+        for (index, waypoint) in plannedRoute.waypoints.enumerated() {
+            print("[RideSession] Waypoint \(index): \(waypoint.displayLabel) at \(waypoint.name)")
+        }
+        for maneuverDescription in plannedRoute.maneuverDebugDescriptions {
+            print("[RideSession] \(maneuverDescription)")
+        }
+        updateBannerPresentation()
     }
 
     var commandStatusText: String {
-        if isVisionOverrideActive {
-            return "Source: \(effectiveCommandSource.displayText). \(obstacleStatusText)"
-        }
-
-        if !rideActive {
-            return "Source: \(effectiveCommandSource.displayText). Start a ride to activate navigation + safety."
-        }
-
-        if effectiveCommand == .arrived {
-            return "Source: \(effectiveCommandSource.displayText). Destination reached."
-        }
-
-        if navigationManager.currentInstruction.isEmpty {
-            return "Source: \(effectiveCommandSource.displayText). Following route."
-        }
-
-        return "Source: \(effectiveCommandSource.displayText). Instruction: \(navigationManager.currentInstruction.uppercased())"
+        bannerSubtitle
     }
 
     static func resolveCommand(
@@ -146,6 +188,22 @@ final class RideSessionManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        locationManager.$location
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self, self.destinationCoordinate != nil, !self.rideActive else { return }
+                self.previewRouteIfPossible()
+            }
+            .store(in: &cancellables)
+
+        locationManager.$travelHeadingDegrees
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self, self.destinationCoordinate != nil, !self.rideActive else { return }
+                self.previewRouteIfPossible()
+            }
+            .store(in: &cancellables)
+
         navigationManager.$currentBoardCommand
             .receive(on: DispatchQueue.main)
             .sink { [weak self] command in
@@ -155,6 +213,23 @@ final class RideSessionManager: ObservableObject {
                 }
                 print("[RideSession] Navigation command -> \(command.displayText)")
                 self.updateEffectiveCommand()
+            }
+            .store(in: &cancellables)
+
+        navigationManager.$nextInstructionDisplayText
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateBannerPresentation()
+            }
+            .store(in: &cancellables)
+
+        navigationManager.$activeManeuverAnnouncement
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] announcement in
+                if let announcement {
+                    print("[RideSession] Banner maneuver -> \(announcement.title)")
+                }
+                self?.updateBannerPresentation()
             }
             .store(in: &cancellables)
 
@@ -191,6 +266,7 @@ final class RideSessionManager: ObservableObject {
                 obstacleStatusText = "Stopping for obstacle"
             }
         }
+        updateBannerPresentation()
     }
 
     private func updateEffectiveCommand() {
@@ -217,25 +293,98 @@ final class RideSessionManager: ObservableObject {
         } else if previousCommand != effectiveCommand {
             print("[RideSession] Effective command -> \(effectiveCommand.displayText) [\(effectiveCommandSource.displayText)]")
         }
+
+        updateBannerPresentation()
     }
 
-    private func sampleWaypoints(to destinationCoordinate: CLLocationCoordinate2D) -> [Waypoint] {
-        [
-            Waypoint(
-                name: "Start Point",
-                coordinate: CLLocationCoordinate2D(latitude: 34.0211, longitude: -118.2870),
-                action: .start
-            ),
-            Waypoint(
-                name: "West 34th & Watt Way",
-                coordinate: CLLocationCoordinate2D(latitude: 34.0195, longitude: -118.2879),
-                action: .right
-            ),
-            Waypoint(
-                name: "Destination",
-                coordinate: destinationCoordinate,
-                action: .destination
+    private func updateBannerPresentation() {
+        if isVisionOverrideActive {
+            bannerCommand = effectiveCommand
+            bannerTitle = effectiveCommandText
+            bannerSubtitle = "Source: \(effectiveCommandSource.displayText). \(obstacleStatusText)"
+            return
+        }
+
+        if rideActive, let announcement = navigationManager.activeManeuverAnnouncement {
+            bannerCommand = announcement.command
+            bannerTitle = announcement.title
+
+            if navigationManager.nextInstructionDisplayText.isEmpty {
+                bannerSubtitle = "Source: Navigation. \(announcement.subtitle)"
+            } else {
+                bannerSubtitle = "Source: Navigation. \(announcement.subtitle). Next: \(navigationManager.nextInstructionDisplayText)"
+            }
+            return
+        }
+
+        bannerCommand = effectiveCommand
+        bannerTitle = effectiveCommandText
+
+        if !rideActive {
+            if let routeErrorMessage {
+                bannerSubtitle = "Source: \(effectiveCommandSource.displayText). \(routeErrorMessage)"
+            } else {
+                bannerSubtitle = "Source: \(effectiveCommandSource.displayText). \(routeStatusText)"
+            }
+            return
+        }
+
+        if effectiveCommand == .arrived {
+            bannerSubtitle = "Source: \(effectiveCommandSource.displayText). Destination reached."
+            return
+        }
+
+        if navigationManager.nextInstructionDisplayText.isEmpty {
+            bannerSubtitle = "Source: \(effectiveCommandSource.displayText). Following route."
+        } else {
+            bannerSubtitle = "Source: \(effectiveCommandSource.displayText). Next: \(navigationManager.nextInstructionDisplayText)"
+        }
+    }
+
+    private func previewRouteIfPossible() {
+        guard !rideActive else { return }
+        guard let destinationCoordinate else {
+            routeCoordinates = []
+            routeErrorMessage = nil
+            routeStatusText = "Select a destination to build a route."
+            updateBannerPresentation()
+            return
+        }
+        guard let currentLocation = locationManager.location?.coordinate else {
+            routeCoordinates = []
+            routeErrorMessage = nil
+            routeStatusText = "Destination selected. Waiting for current location."
+            updateBannerPresentation()
+            return
+        }
+        guard let routePlanner else {
+            routeCoordinates = []
+            routeErrorMessage = RoutePlanningError.graphUnavailable.localizedDescription
+            routeStatusText = "Route graph unavailable."
+            updateBannerPresentation()
+            return
+        }
+
+        do {
+            let plannedRoute = try routePlanner.route(
+                from: currentLocation,
+                to: destinationCoordinate,
+                travelHeadingDegrees: locationManager.travelHeadingDegrees
             )
-        ]
+            routeCoordinates = plannedRoute.coordinates
+            routeErrorMessage = nil
+            routeStatusText = String(
+                format: "Preview: %.0fft, %d nav steps over %d path nodes",
+                plannedRoute.totalDistanceFeet,
+                plannedRoute.navigationStepCount,
+                plannedRoute.coordinates.count
+            )
+            updateBannerPresentation()
+        } catch {
+            routeCoordinates = []
+            routeErrorMessage = error.localizedDescription
+            routeStatusText = error.localizedDescription
+            updateBannerPresentation()
+        }
     }
 }

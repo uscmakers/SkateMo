@@ -67,6 +67,14 @@ struct MapPageView: View {
                                systemImage: "mappin.and.ellipse",
                                coordinate: destinationCoordinate)
                     }
+
+                    if rideSession.routeCoordinates.count >= 2 {
+                        MapPolyline(MKPolyline(
+                            coordinates: rideSession.routeCoordinates,
+                            count: rideSession.routeCoordinates.count
+                        ))
+                        .stroke(.blue.opacity(0.9), lineWidth: 6)
+                    }
                 }
                 .onTapGesture { location in
                     guard rideSession.rideStarted, rideSession.isSelectingDestination else { return }
@@ -80,9 +88,9 @@ struct MapPageView: View {
             // UI OVERLAY
             VStack {
                 RideCommandBanner(
-                    command: rideSession.effectiveCommand,
-                    title: rideSession.effectiveCommandText,
-                    subtitle: rideSession.commandStatusText
+                    command: rideSession.bannerCommand,
+                    title: rideSession.bannerTitle,
+                    subtitle: rideSession.bannerSubtitle
                 )
                 .padding(.top, 50)
                 .padding(.horizontal)
@@ -112,6 +120,15 @@ struct MapPageView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .padding(.top, 8)
                 }
+
+                Text(rideSession.routeStatusText)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.top, 8)
 
                 // Swipe hint
                 HStack {
