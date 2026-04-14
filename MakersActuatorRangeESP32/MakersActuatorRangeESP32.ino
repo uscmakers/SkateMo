@@ -2,7 +2,7 @@
 
 // Targets
 #define RIGHT_TARGET 4000
-#define LEFT_TARGET 750
+#define LEFT_TARGET 850
 #define MID_TARGET 2300
 
 // Limits
@@ -65,47 +65,44 @@ void loop() {
   else if (currentState == RIGHT) target = RIGHT_TARGET;
   else if (currentState == STRAIGHT) target = MID_TARGET;
 
-  // --- Non-Blocking Serial Print (Prevents Flooding) ---
+  // --- Non-Blocking Serial Print ---
   if (millis() - lastPrintTime >= 250) {
     Serial.print("Pos: ");
     Serial.print(pos);
     Serial.print(" | Target: ");
     Serial.println(target);
     
-    // Reset the timer
     lastPrintTime = millis();
   }
 
   // --- STOP OVERRIDE ---
   if (currentState == STOP) {
     stopMotor();
-    delay(50);
+    delay(30);
     return;
   }
 
-  // --- HARD SAFETY (no oscillation) ---
+  // --- HARD SAFETY FIX ---
+  // Default state allows movement in both directions
+  bool allowMoveRight = true; 
+  bool allowMoveLeft = true;  
+
   if (pos >= RIGHT_LIMIT) {
-    stopMotor();
-    Serial.println("RIGHT LIMIT HIT");
-    delay(100);
-    return;
+    allowMoveRight = false; // Block moving further right
   }
-
+  
   if (pos <= LEFT_LIMIT) {
-    stopMotor();
-    Serial.println("LEFT LIMIT HIT");
-    delay(100);
-    return;
+    allowMoveLeft = false;  // Block moving further left
   }
 
   // --- CONTROL ---
-  // If current pos is smaller than target, move towards higher numbers (Right)
-  if (pos < target - TOLERANCE) {
-    moveForward();
+  // If current pos is smaller than target AND we aren't at the right limit
+  if (pos < target - TOLERANCE && allowMoveRight) {
+    moveRight();
   }
-  // If current pos is larger than target, move towards lower numbers (Left)
-  else if (pos > target + TOLERANCE) {
-    moveBackward();
+  // If current pos is larger than target AND we aren't at the left limit
+  else if (pos > target + TOLERANCE && allowMoveLeft) {
+    moveLeft();
   }
   else {
     stopMotor();
@@ -116,16 +113,16 @@ void loop() {
 
 // --- Motor ---
 
-// Moves towards higher numbers (Right Target = 4000)
-void moveForward() {
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, HIGH);
-}
-
-// Moves towards lower numbers (Left Target = 750)
-void moveBackward() {
+// Move Right (Increases pos towards 4000)
+void moveRight() {
   digitalWrite(IN1, HIGH);
   digitalWrite(IN2, LOW);
+}
+
+// Move Left (Decreases pos towards 750)
+void moveLeft() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
 }
 
 void stopMotor() {
