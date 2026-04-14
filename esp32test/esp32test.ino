@@ -6,11 +6,13 @@ const int IN1 = 25;
 const int IN2 = 26;
 const int ENA = 27;
 
+// Variable to track the last time we printed to the Serial monitor
+unsigned long lastPrintTime = 0; 
 
 void setup() {
   Serial.begin(115200);
 
-  pinMode(PIN_SLIDE_POT_A, INPUT );
+  pinMode(PIN_SLIDE_POT_A, INPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(ENA, OUTPUT);
@@ -22,19 +24,25 @@ void setup() {
 }
 
 void loop() {
-  int value_slide_pot_a = analogRead(PIN_SLIDE_POT_A);
-  Serial.print("Slide Pot value: ");
-  Serial.println(value_slide_pot_a);
+  // 1. Only print the pot value every 500 milliseconds to prevent Serial flooding
+  if (millis() - lastPrintTime >= 500) {
+    int value_slide_pot_a = analogRead(PIN_SLIDE_POT_A);
+    Serial.print("Slide Pot value: ");
+    Serial.println(value_slide_pot_a);
+    
+    // Reset the timer
+    lastPrintTime = millis(); 
+  }
   
+  // 2. Check for commands
   if (Serial.available()) {
     command = Serial.readStringUntil('\n');
-    command.trim();
+    command.trim(); // Removes whitespace and hidden carriage returns
 
     if (command == "up") {
       moveForward();
     }
-
-    if (command == "down") {
+    else if (command == "down") {
       moveBackward();
     }
   }

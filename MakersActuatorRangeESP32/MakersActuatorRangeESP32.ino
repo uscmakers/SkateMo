@@ -1,26 +1,33 @@
 #define PIN_SLIDE_POT_A 35
 
-// Position targets
+// Targets
 #define RIGHT_TARGET 4000
 #define LEFT_TARGET 750
-#define MID_TARGET 2300   // straight
+#define MID_TARGET 2300
 
-// Safety limits (optional)
+// Limits
 #define RIGHT_LIMIT 4094
 #define LEFT_LIMIT 700
 
-#define TOLERANCE 25   // deadband to prevent jitter
+#define TOLERANCE 25
 
 // Motor pins
 const int IN1 = 25;
 const int IN2 = 26;
 const int ENA = 27;
 
+// PWM (ESP32 core v3)
+const int pwmFreq = 5000;
+const int pwmResolution = 8;
+const int motorSpeed = 180;
+
 String command = "";
 
-// Current mode
 enum State {STOP, LEFT, RIGHT, STRAIGHT};
 State currentState = STOP;
+
+// --- Variable to track the last time we printed to the Serial monitor ---
+unsigned long lastPrintTime = 0; 
 
 void setup() {
   Serial.begin(115200);
@@ -28,93 +35,97 @@ void setup() {
   pinMode(PIN_SLIDE_POT_A, INPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
-  pinMode(ENA, OUTPUT);
 
-  analogWrite(ENA, 200); // speed (0–255)
+  ledcAttach(ENA, pwmFreq, pwmResolution);
+  ledcWrite(ENA, motorSpeed);
 
   stopMotor();
 
-  Serial.println("Type: left, right, straight, stop");
+  Serial.println("Commands: left, right, straight, stop");
 }
 
 void loop() {
-  int poten_read = analogRead(PIN_SLIDE_POT_A);
+  int pos = analogRead(PIN_SLIDE_POT_A);
 
-  // Debug print
-  Serial.print("Pot: ");
-  Serial.println(poten_read);
-
-  // --- Handle Serial Input ---
+  // --- Serial ---
   if (Serial.available()) {
     command = Serial.readStringUntil('\n');
     command.trim();
 
-    if (command == "left") {
-      currentState = LEFT;
-    } 
-    else if (command == "right") {
-      currentState = RIGHT;
-    } 
-    else if (command == "straight") {
-      currentState = STRAIGHT;
-    } 
-    else if (command == "stop") {
-      currentState = STOP;
-    }
+    if (command == "left") currentState = LEFT;
+    else if (command == "right") currentState = RIGHT;
+    else if (command == "straight") currentState = STRAIGHT;
+    else if (command == "stop") currentState = STOP;
   }
 
-  // --- Determine target ---
-  int target = poten_read; // default (no movement)
+  // --- Choose target ---
+  int target = MID_TARGET;
 
-  if (currentState == LEFT) {
-    target = LEFT_TARGET;
-  } 
-  else if (currentState == RIGHT) {
-    target = RIGHT_TARGET;
-  } 
-  else if (currentState == STRAIGHT) {
-    target = MID_TARGET;
+  if (currentState == LEFT) target = LEFT_TARGET;
+  else if (currentState == RIGHT) target = RIGHT_TARGET;
+  else if (currentState == STRAIGHT) target = MID_TARGET;
+
+  // --- Non-Blocking Serial Print (Prevents Flooding) ---
+  if (millis() - lastPrintTime >= 250) {
+    Serial.print("Pos: ");
+    Serial.print(pos);
+    Serial.print(" | Target: ");
+    Serial.println(target);
+    
+    // Reset the timer
+    lastPrintTime = millis();
   }
 
-  // --- Control Logic ---
+  // --- STOP OVERRIDE ---
   if (currentState == STOP) {
     stopMotor();
-  } 
+    delay(50);
+    return;
+  }
+
+  // --- HARD SAFETY (no oscillation) ---
+  if (pos >= RIGHT_LIMIT) {
+    stopMotor();
+    Serial.println("RIGHT LIMIT HIT");
+    delay(100);
+    return;
+  }
+
+  if (pos <= LEFT_LIMIT) {
+    stopMotor();
+    Serial.println("LEFT LIMIT HIT");
+    delay(100);
+    return;
+  }
+
+  // --- CONTROL ---
+  // If current pos is smaller than target, move towards higher numbers (Right)
+  if (pos < target - TOLERANCE) {
+    moveForward();
+  }
+  // If current pos is larger than target, move towards lower numbers (Left)
+  else if (pos > target + TOLERANCE) {
+    moveBackward();
+  }
   else {
-    if (poten_read < target - TOLERANCE) {
-      moveRight();   // adjust direction if needed
-    } 
-    else if (poten_read > target + TOLERANCE) {
-      moveLeft();
-    } 
-    else {
-      stopMotor();   // within range
-    }
+    stopMotor();
   }
 
-  // --- Safety Clamp ---
-  if (poten_read > RIGHT_LIMIT-20) {
-    moveLeft();
-  }
-  else if (poten_read < LEFT_LIMIT) {
-    moveRight();
-  }
-  else if (poten_read == 4095){
-    moveLeft();
-  }
-
-  delay(50); // small delay for stability
+  delay(30);
 }
 
-// --- Motor Functions ---
-void moveLeft() {
-  digitalWrite(IN1, HIGH);
-  digitalWrite(IN2, LOW);
-}
+// --- Motor ---
 
-void moveRight() {
+// Moves towards higher numbers (Right Target = 4000)
+void moveForward() {
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, HIGH);
+}
+
+// Moves towards lower numbers (Left Target = 750)
+void moveBackward() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
 }
 
 void stopMotor() {
