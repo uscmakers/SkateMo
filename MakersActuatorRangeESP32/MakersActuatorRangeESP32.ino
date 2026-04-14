@@ -96,10 +96,10 @@ void loop() {
   if (poten_read > RIGHT_LIMIT-20) {
     moveLeft();
   }
-  if (poten_read < LEFT_LIMIT) {
+  else if (poten_read < LEFT_LIMIT) {
     moveRight();
   }
-  if (poten_read == 4095){
+  else if (poten_read == 4095){
     moveLeft();
   }
 
