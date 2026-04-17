@@ -23,6 +23,8 @@
 const int IN1 = 25;
 const int IN2 = 26;
 const int ENA = 27;
+const int LEDC_FREQ_HZ = 5000;
+const int LEDC_RES_BITS = 8;
 
 // ── ESC output ────────────────────────────────────────────────────
 // Safe default pin for ESP32 signal output that does not conflict with actuator pins.
@@ -36,6 +38,7 @@ const int ESC_ARM_DELAY_MS = 2000;
 
 const int THROTTLE_STEP_US = 10;
 const int THROTTLE_UPDATE_MS = 20;
+const int LOOP_DELAY_MS = 20;
 
 // ── BLE config (must match BLEMotorCombined) ─────────────────────
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789012"
@@ -192,7 +195,7 @@ void setup() {
   pinMode(PIN_SLIDE_POT_A, INPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
-  ledcAttach(ENA, 5000, 8);
+  ledcAttach(ENA, LEDC_FREQ_HZ, LEDC_RES_BITS);
   stopSteeringMotor();
 
   esc.setPeriodHertz(50);
@@ -231,22 +234,31 @@ void setup() {
 void loop() {
   int potVal = analogRead(PIN_SLIDE_POT_A);
 
-  int target = potVal;
+  int target = MID_TARGET;
   if      (currentState == STEER_LEFT)  target = LEFT_TARGET;
   else if (currentState == STEER_RIGHT) target = RIGHT_TARGET;
   else if (currentState == STRAIGHT)    target = MID_TARGET;
 
-  if (currentState == STOP) {
-    stopSteeringMotor();
-  } else {
-    if      (potVal < target - TOLERANCE) moveRight();
-    else if (potVal > target + TOLERANCE) moveLeft();
-    else                                  stopSteeringMotor();
+  // Hard safety limits override steering state-machine motion for this cycle.
+  bool safetyOverride = false;
+  if (potVal > RIGHT_LIMIT) {
+    moveLeft();
+    safetyOverride = true;
+  } else if (potVal < LEFT_LIMIT) {
+    moveRight();
+    safetyOverride = true;
   }
 
-  if (potVal > RIGHT_LIMIT) moveLeft();
-  if (potVal < LEFT_LIMIT)  moveRight();
+  if (!safetyOverride) {
+    if (currentState == STOP) {
+      stopSteeringMotor();
+    } else {
+      if      (potVal < target - TOLERANCE) moveRight();
+      else if (potVal > target + TOLERANCE) moveLeft();
+      else                                  stopSteeringMotor();
+    }
+  }
 
   updateThrottleRamp();
-  delay(20);
+  delay(LOOP_DELAY_MS);
 }
