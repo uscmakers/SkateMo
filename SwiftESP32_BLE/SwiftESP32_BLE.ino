@@ -1,165 +1,291 @@
-#include <BLEDevice.h>    // Core BLE library - handles device initialization
-#include <BLEServer.h>    // Allows ESP32 to act as a BLE server (peripheral)
-#include <BLEUtils.h>     // Utility helpers for BLE operations
-#include <BLE2902.h>      // Descriptor required to enable BLE notifications
-#include <string>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
 
+// =============================
+// Steering Slide Pot & Targets
+// =============================
+#define PIN_SLIDE_POT_A 35
+#define RIGHT_TARGET 4025
+#define LEFT_TARGET 850
+#define MID_TARGET 2300
+
+#define RIGHT_LIMIT 4094
+#define LEFT_LIMIT 700
+#define TOLERANCE 25
+
+// =============================
+// Steering Motor Pins
+// =============================
 const int IN1 = 25;
 const int IN2 = 26;
 const int ENA = 27;
-const int DEFAULT_MOTOR_SPEED = 200;
 
-// UUIDs uniquely identify your BLE service and characteristic
-// Think of the Service like a container, and the Characteristic as the data slot inside it
-// These can be any valid UUID - they just need to match what the client (nRF / Swift app) looks for
-#define SERVICE_UUID        "12345678-1234-1234-1234-123456789012"
-#define CHARACTERISTIC_UUID "87654321-4321-4321-4321-210987654321"
+// =============================
+// Steering PWM
+// Revert to the simpler pin-based LEDC API
+// =============================
+const int pwmFreq = 5000;
+const int pwmResolution = 8;
+const int motorSpeed = 255;
 
+// =============================
+// ESC Settings
+// =============================
+const int ESC_PIN = 14;
+const int MIN_US = 1000;
+const int MAX_US = 2000;
 
-BLECharacteristic* pCharacteristic = nullptr;  // Pointer to our characteristic, declared globally so loop() can access it
-bool deviceConnected = false;                  // Tracks whether a client is currently connected
-void handleCommand(uint8_t cmd);
-void Motor1_Forward(int speed = DEFAULT_MOTOR_SPEED);
-void Motor1_Backward(int speed = DEFAULT_MOTOR_SPEED);
-void Motor1_Brake();
+const int ESC_PWM_FREQ = 50;
+const int ESC_PWM_RESOLUTION = 16;
+const int ESC_PWM_CHANNEL = 1;
 
-enum Command { 
-  FWD = 0,
-  BACK = 1,
-  LEFT = 2, 
-  RIGHT = 3,
-  STOP = 4,
+int currentEscUs = MIN_US;
+unsigned long lastEscUpdate = 0;
+
+// =============================
+// BLE UUIDs
+// =============================
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+String command = "";
+
+// =============================
+// State Machine
+// =============================
+enum State { STOP, LEFT, RIGHT, STRAIGHT };
+State currentState = STOP;
+
+unsigned long lastPrintTime = 0;
+unsigned long lastPosCheck = 0;
+int lastPos = 0;
+
+// =============================
+// BLE Connection State Variables
+// =============================
+BLEServer* pServer = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+
+// =============================
+// ESC Helper Functions
+// =============================
+uint32_t usToDuty(int us) {
+  const uint32_t maxDuty = (1 << ESC_PWM_RESOLUTION) - 1;
+  const uint32_t periodUs = 20000;
+  return (uint32_t)((((uint64_t)us) * maxDuty) / periodUs);
+}
+
+void writeESCus(int us) {
+  ledcWriteChannel(ESC_PWM_CHANNEL, usToDuty(us));
+}
+
+// =============================
+// Motor Functions
+// =============================
+void moveRight() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+}
+
+void moveLeft() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+}
+
+void stopMotor() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+}
+
+// =============================
+// BLE Server Callbacks
+// =============================
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) {
+    deviceConnected = true;
+    Serial.println("BLE Device Connected!");
+  }
+
+  void onDisconnect(BLEServer* pServer) {
+    deviceConnected = false;
+    Serial.println("BLE Device Disconnected!");
+  }
 };
 
-// ServerCallbacks handles connection and disconnection events
-// We inherit from BLEServerCallbacks and override the two event functions
-class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* pServer) {         // Fires when a client connects
-    deviceConnected = true;                    // Update our connection flag
-    Serial.println("Connected!");              // Print to Serial Monitor for debugging
-  }
-  void onDisconnect(BLEServer* pServer) {      // Fires when a client disconnects
-    deviceConnected = false;                   // Update our connection flag
-    Serial.println("Disconnected. Restarting advertising...");
-    pServer->startAdvertising();               // Resume advertising so a new client can connect
-  }
-};
+// =============================
+// BLE Characteristic Callbacks
+// =============================
+class MyCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    String rxValue = pCharacteristic->getValue().c_str();
+    rxValue.trim();
 
-// CharacteristicCallbacks handles events on the characteristic itself
-// In this case, we only care about onWrite - when the client sends data to us
-class CharacteristicCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pCharacteristic) {
-    std::string value = pCharacteristic->getValue();
-    if (!value.empty()) {
-      const uint8_t cmd = static_cast<uint8_t>(value[0]);
-      Serial.print("Received command byte: 0x");
-      Serial.println(cmd, HEX);
-      handleCommand(cmd);
+    if (rxValue.length() > 0) {
+      Serial.print("Received BLE Command: ");
+      Serial.println(rxValue);
+
+      if (rxValue.equalsIgnoreCase("left")) currentState = LEFT;
+      else if (rxValue.equalsIgnoreCase("right")) currentState = RIGHT;
+      else if (rxValue.equalsIgnoreCase("straight")) currentState = STRAIGHT;
+      else if (rxValue.equalsIgnoreCase("stop")) currentState = STOP;
     }
   }
 };
 
+// =============================
+// Setup
+// =============================
 void setup() {
+  Serial.begin(115200);
 
-  //set pin modes of the motor controller on ESP32
+  pinMode(PIN_SLIDE_POT_A, INPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
-  pinMode(ENA, OUTPUT);
 
-  Serial.begin(115200);              // Start Serial Monitor at 115200 baud rate for debugging output
+  // Steering PWM, pin-based like your earlier working code
+  ledcAttach(ENA, pwmFreq, pwmResolution);
+  ledcWrite(ENA, motorSpeed);
+  stopMotor();
+
+  // ESC PWM
+  ledcAttachChannel(ESC_PIN, ESC_PWM_FREQ, ESC_PWM_RESOLUTION, ESC_PWM_CHANNEL);
+
+  Serial.println("Arming ESC...");
+  writeESCus(MIN_US);
+  delay(3000);
+  Serial.println("ESC armed. Ready.");
+
   Serial.println("Starting BLE...");
+  BLEDevice::init("ESP32_Motor_Controller");
 
-  BLEDevice::init("ESP32-Enum");     // Initialize the BLE stack and set the device name (visible during scan)
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
 
-  BLEServer* pServer = BLEDevice::createServer();    // Create the BLE server (ESP32 is the peripheral)
-  pServer->setCallbacks(new ServerCallbacks());       // Attach our connection/disconnection callback handlers
+  BLEService *pService = pServer->createService(SERVICE_UUID);
 
-  BLEService* pService = pServer->createService(SERVICE_UUID);  // Create a BLE service with our defined UUID
-
-  // Create a characteristic inside the service
-  // PROPERTY_READ   = client can read the current value
-  // PROPERTY_WRITE  = client can write/send a value to us
-  // PROPERTY_NOTIFY = we can push updates to the client without them asking
-  pCharacteristic = pService->createCharacteristic(
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
     CHARACTERISTIC_UUID,
-    BLECharacteristic::PROPERTY_READ   |
-    BLECharacteristic::PROPERTY_WRITE  |
-    BLECharacteristic::PROPERTY_NOTIFY
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_WRITE
   );
 
-  pCharacteristic->setCallbacks(new CharacteristicCallbacks());  // Attach our write callback handler
-  pCharacteristic->addDescriptor(new BLE2902());                 // BLE2902 descriptor is required for NOTIFY to work
-  pCharacteristic->setValue("Hello from ESP32");                 // Set an initial readable value on the characteristic
+  pCharacteristic->setCallbacks(new MyCallbacks());
+  pService->start();
 
-  pService->start();  // Start the service so it becomes active and discoverable
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
 
-  BLEDevice::getAdvertising()->addServiceUUID(SERVICE_UUID);  // Include our service UUID in the advertisement packet
-  BLEDevice::getAdvertising()->setScanResponse(true);         // Allow extra data (like device name) to be sent on scan response
-  BLEDevice::startAdvertising();                              // Begin broadcasting so clients can find us
-
-  Serial.println("Advertising... Open nRF Connect and scan!");
+  Serial.println("BLE Ready! Connect to 'ESP32_Motor_Controller' in nRF Connect.");
 }
 
+// =============================
+// Main Loop
+// =============================
 void loop() {
-  delay(20);
-}
-
-void handleCommand(uint8_t cmd) {
-  Serial.print("handleCommand: 0x");
-  Serial.println(cmd, HEX);
-
-  switch (cmd) {
-    case FWD:
-      Serial.println("FWD Received");
-      // write commands for straightening out the motor
-      Motor1_Forward();
-      break; 
-    case BACK:
-      Serial.println("BACK Received");
-      // straighten out and reverse wheels
-      Motor1_Backward();
-      break;
-    case RIGHT:
-      Serial.println("RIGHT Received");
-      // turn motor right
-      break;
-    case LEFT:
-      Serial.println("LEFT Received");
-      // turn motor left
-      break;
-    case STOP:
-      Serial.println("STOP Received");
-      Motor1_Brake();
-      break;
-    default:
-      Serial.println("Unknown Command");
-      break;
+  if (!deviceConnected && oldDeviceConnected) {
+    pServer->startAdvertising();
+    Serial.println("Restarted Advertising...");
+    oldDeviceConnected = deviceConnected;
   }
 
-  // send a one-byte ACK back by notifying (0x80 | cmd)
-  if (deviceConnected && pCharacteristic) { 
-    uint8_t ack = 0x80 | cmd;
-    pCharacteristic->setValue(&ack, 1);
-    pCharacteristic->notify();
-    Serial.print("Sent ACK: 0x");
-    Serial.println(ack, HEX);
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
   }
-}
 
-void Motor1_Forward(int Speed)  {
-  digitalWrite(IN1,HIGH);
-  digitalWrite(IN2,LOW);
-  analogWrite(ENA,Speed);
-}
+  if (Serial.available()) {
+    command = Serial.readStringUntil('\n');
+    command.trim();
 
-void Motor1_Backward(int Speed)  {
-  digitalWrite(IN1,LOW);
-  digitalWrite(IN2,HIGH);
-  analogWrite(ENA,Speed);
-}
+    if (command.equalsIgnoreCase("left")) currentState = LEFT;
+    else if (command.equalsIgnoreCase("right")) currentState = RIGHT;
+    else if (command.equalsIgnoreCase("straight")) currentState = STRAIGHT;
+    else if (command.equalsIgnoreCase("stop")) currentState = STOP;
+  }
 
-void Motor1_Brake(){
-  digitalWrite(IN1,LOW);
-  digitalWrite(IN2,LOW);
-  analogWrite(ENA,0);
+  int pos = analogRead(PIN_SLIDE_POT_A);
+  int target = MID_TARGET;
+
+  if (currentState == LEFT) target = LEFT_TARGET;
+  else if (currentState == RIGHT) target = RIGHT_TARGET;
+  else if (currentState == STRAIGHT) target = MID_TARGET;
+
+  bool steeringAtTarget = abs(pos - target) <= TOLERANCE;
+
+  if (currentState == STOP) {
+    stopMotor();
+    steeringAtTarget = true;
+  } else {
+    bool allowMoveRight = true;
+    bool allowMoveLeft = true;
+
+    if (pos >= RIGHT_LIMIT) allowMoveRight = false;
+    if (pos <= LEFT_LIMIT) allowMoveLeft = false;
+
+    if (pos < target - TOLERANCE && allowMoveRight) {
+      moveRight();
+      steeringAtTarget = false;
+    }
+    else if (pos > target + TOLERANCE && allowMoveLeft) {
+      moveLeft();
+      steeringAtTarget = false;
+    }
+    else {
+      stopMotor();
+      steeringAtTarget = true;
+    }
+  }
+
+  int targetEscUs = MIN_US;
+  if (currentState != STOP && steeringAtTarget) {
+    targetEscUs = MAX_US;
+  }
+
+  if (millis() - lastEscUpdate >= 10) {
+    if (currentEscUs < targetEscUs) {
+      currentEscUs += 20;
+      if (currentEscUs > targetEscUs) currentEscUs = targetEscUs;
+    } else if (currentEscUs > targetEscUs) {
+      currentEscUs -= 20;
+      if (currentEscUs < targetEscUs) currentEscUs = targetEscUs;
+    }
+
+    writeESCus(currentEscUs);
+    lastEscUpdate = millis();
+  }
+
+  if (millis() - lastPosCheck >= 200) {
+    Serial.print("Steering Pos: ");
+    Serial.print(pos);
+    Serial.print(" | Delta: ");
+    Serial.println(pos - lastPos);
+    lastPos = pos;
+    lastPosCheck = millis();
+  }
+
+  if (millis() - lastPrintTime >= 250) {
+    Serial.print("State: ");
+    if (currentState == STOP) Serial.print("STOP");
+    else if (currentState == LEFT) Serial.print("LEFT");
+    else if (currentState == RIGHT) Serial.print("RIGHT");
+    else if (currentState == STRAIGHT) Serial.print("STRAIGHT");
+
+    Serial.print(" | Pos: ");
+    Serial.print(pos);
+    Serial.print(" | Target: ");
+    Serial.print(target);
+    Serial.print(" | AtTarget: ");
+    Serial.print(steeringAtTarget ? "YES" : "NO");
+    Serial.print(" | ESC (us): ");
+    Serial.println(currentEscUs);
+
+    lastPrintTime = millis();
+  }
+
+  delay(5);
 }
