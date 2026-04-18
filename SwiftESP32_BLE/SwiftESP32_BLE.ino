@@ -2,10 +2,12 @@
 #include <BLEServer.h>    // Allows ESP32 to act as a BLE server (peripheral)
 #include <BLEUtils.h>     // Utility helpers for BLE operations
 #include <BLE2902.h>      // Descriptor required to enable BLE notifications
+#include <string>
 
 const int IN1 = 25;
 const int IN2 = 26;
 const int ENA = 27;
+const int DEFAULT_MOTOR_SPEED = 200;
 
 // UUIDs uniquely identify your BLE service and characteristic
 // Think of the Service like a container, and the Characteristic as the data slot inside it
@@ -16,13 +18,17 @@ const int ENA = 27;
 
 BLECharacteristic* pCharacteristic = nullptr;  // Pointer to our characteristic, declared globally so loop() can access it
 bool deviceConnected = false;                  // Tracks whether a client is currently connected
-void handleCommand(char cmd);
+void handleCommand(uint8_t cmd);
+void Motor1_Forward(int speed = DEFAULT_MOTOR_SPEED);
+void Motor1_Backward(int speed = DEFAULT_MOTOR_SPEED);
+void Motor1_Brake();
 
 enum Command { 
   FWD = 0,
   BACK = 1,
   LEFT = 2, 
   RIGHT = 3,
+  STOP = 4,
 };
 
 // ServerCallbacks handles connection and disconnection events
@@ -43,11 +49,12 @@ class ServerCallbacks : public BLEServerCallbacks {
 // In this case, we only care about onWrite - when the client sends data to us
 class CharacteristicCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pCharacteristic) {
-    String value = pCharacteristic->getValue();
-    if (value.length() > 0) {
-      Serial.print("Received: ");
-      Serial.println(value);
-      handleCommand((char)value[0]); // Dispatch the first byte as a command
+    std::string value = pCharacteristic->getValue();
+    if (!value.empty()) {
+      const uint8_t cmd = static_cast<uint8_t>(value[0]);
+      Serial.print("Received command byte: 0x");
+      Serial.println(cmd, HEX);
+      handleCommand(cmd);
     }
   }
 };
@@ -94,19 +101,10 @@ void setup() {
 }
 
 void loop() {
-  if (deviceConnected) {                        // Only send data if a client is connected
-    static int counter = 0;                     // static keeps the value between loop() calls instead of resetting each time
-    char msg[32];                               // Character buffer to hold our outgoing message (32 bytes max)
-    snprintf(msg, sizeof(msg), "Ping: %d", counter++);  // Format the message safely into the buffer, then increment counter
-    pCharacteristic->setValue(msg);             // Update the characteristic's value with our new message
-    pCharacteristic->notify();                  // Push the updated value to the connected client via notification
-    Serial.print("Sent: ");
-    Serial.println(msg);                        // Log what we sent to Serial Monitor
-    delay(2000);                                // Wait 2 seconds before sending the next update
-  }
+  delay(20);
 }
 
-void handleCommand(char cmd) {
+void handleCommand(uint8_t cmd) {
   Serial.print("handleCommand: 0x");
   Serial.println(cmd, HEX);
 
@@ -129,6 +127,10 @@ void handleCommand(char cmd) {
       Serial.println("LEFT Received");
       // turn motor left
       break;
+    case STOP:
+      Serial.println("STOP Received");
+      Motor1_Brake();
+      break;
     default:
       Serial.println("Unknown Command");
       break;
@@ -144,19 +146,20 @@ void handleCommand(char cmd) {
   }
 }
 
-  void Motor1_Forward(int Speed)  {      
-    digitalWrite(IN1,HIGH);       
-    digitalWrite(IN2,LOW);        
-    analogWrite(ENA,Speed); 
-  }    
-  
-  void Motor1_Backward(int Speed)  { 
-    digitalWrite(IN1,LOW);
-    digitalWrite(IN2,HIGH);        
-    analogWrite(ENA,Speed); 
-  } 
-  
-  void Motor1_Brake(){ 
-    digitalWrite(IN1,LOW);       
-    digitalWrite(IN2,LOW);  
-  } 
+void Motor1_Forward(int Speed)  {
+  digitalWrite(IN1,HIGH);
+  digitalWrite(IN2,LOW);
+  analogWrite(ENA,Speed);
+}
+
+void Motor1_Backward(int Speed)  {
+  digitalWrite(IN1,LOW);
+  digitalWrite(IN2,HIGH);
+  analogWrite(ENA,Speed);
+}
+
+void Motor1_Brake(){
+  digitalWrite(IN1,LOW);
+  digitalWrite(IN2,LOW);
+  analogWrite(ENA,0);
+}
