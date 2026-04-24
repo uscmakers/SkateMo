@@ -6,6 +6,7 @@
 // Steering Slide Pot & Targets
 // =============================
 #define PIN_SLIDE_POT_A 35
+
 #define RIGHT_TARGET 3600
 #define LEFT_TARGET 1500
 #define MID_TARGET 2900
@@ -23,14 +24,16 @@ const int ENA = 27;
 
 // =============================
 // Steering PWM
-// Revert to the simpler pin-based LEDC API
+// Explicit LEDC channel to avoid ESC conflict
 // =============================
-const int pwmFreq = 5000;
-const int pwmResolution = 8;
+const int STEERING_PWM_FREQ = 5000;
+const int STEERING_PWM_RESOLUTION = 8;
+const int STEERING_PWM_CHANNEL = 0;
 const int motorSpeed = 255;
 
 // =============================
 // ESC Settings
+// Explicit separate LEDC channel
 // =============================
 const int ESC_PIN = 14;
 const int MIN_US = 1000;
@@ -82,21 +85,30 @@ void writeESCus(int us) {
 }
 
 // =============================
-// Motor Functions
+// Steering Motor Functions
 // =============================
-void moveRight() {
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, HIGH);
+// Based on your working test code:
+// moveForward: IN1 HIGH, IN2 LOW
+// moveBackward: IN1 LOW, IN2 HIGH
+// Your old position logic called these "left/right", but the working code
+// proved these are the actual useful directions.
+
+void moveForward() {
+  ledcWriteChannel(STEERING_PWM_CHANNEL, motorSpeed);
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
 }
 
-void moveLeft() {
-  digitalWrite(IN1, HIGH);
-  digitalWrite(IN2, LOW)
+void moveBackward() {
+  ledcWriteChannel(STEERING_PWM_CHANNEL, motorSpeed);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
 }
 
 void stopMotor() {
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
+  ledcWriteChannel(STEERING_PWM_CHANNEL, 0);
 }
 
 // =============================
@@ -126,10 +138,18 @@ class MyCallbacks : public BLECharacteristicCallbacks {
       Serial.print("Received BLE Command: ");
       Serial.println(rxValue);
 
-      if (rxValue.equalsIgnoreCase("left")) currentState = LEFT;
-      else if (rxValue.equalsIgnoreCase("right")) currentState = RIGHT;
-      else if (rxValue.equalsIgnoreCase("straight")) currentState = STRAIGHT;
-      else if (rxValue.equalsIgnoreCase("stop")) currentState = STOP;
+      if (rxValue.equalsIgnoreCase("left")) {
+        currentState = LEFT;
+      }
+      else if (rxValue.equalsIgnoreCase("right")) {
+        currentState = RIGHT;
+      }
+      else if (rxValue.equalsIgnoreCase("straight")) {
+        currentState = STRAIGHT;
+      }
+      else if (rxValue.equalsIgnoreCase("stop")) {
+        currentState = STOP;
+      }
     }
   }
 };
@@ -144,13 +164,23 @@ void setup() {
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
 
-  // Steering PWM, pin-based like your earlier working code
-  ledcAttach(ENA, pwmFreq, pwmResolution);
-  ledcWrite(ENA, motorSpeed);
+  // Steering PWM on explicit channel 0
+  ledcAttachChannel(
+    ENA,
+    STEERING_PWM_FREQ,
+    STEERING_PWM_RESOLUTION,
+    STEERING_PWM_CHANNEL
+  );
+
   stopMotor();
 
-  // ESC PWM
-  ledcAttachChannel(ESC_PIN, ESC_PWM_FREQ, ESC_PWM_RESOLUTION, ESC_PWM_CHANNEL);
+  // ESC PWM on explicit channel 1
+  ledcAttachChannel(
+    ESC_PIN,
+    ESC_PWM_FREQ,
+    ESC_PWM_RESOLUTION,
+    ESC_PWM_CHANNEL
+  );
 
   Serial.println("Arming ESC...");
   writeESCus(MIN_US);
@@ -182,13 +212,16 @@ void setup() {
   BLEDevice::startAdvertising();
 
   Serial.println("BLE Ready! Connect to 'ESP32_Motor_Controller' in nRF Connect.");
+  Serial.println("Serial commands also work: left, right, straight, stop");
 }
 
 // =============================
 // Main Loop
 // =============================
 void loop() {
+  // BLE reconnect handling
   if (!deviceConnected && oldDeviceConnected) {
+    delay(500);
     pServer->startAdvertising();
     Serial.println("Restarted Advertising...");
     oldDeviceConnected = deviceConnected;
@@ -198,41 +231,75 @@ void loop() {
     oldDeviceConnected = deviceConnected;
   }
 
+  // Serial commands for debugging
   if (Serial.available()) {
     command = Serial.readStringUntil('\n');
     command.trim();
 
-    if (command.equalsIgnoreCase("left")) currentState = LEFT;
-    else if (command.equalsIgnoreCase("right")) currentState = RIGHT;
-    else if (command.equalsIgnoreCase("straight")) currentState = STRAIGHT;
-    else if (command.equalsIgnoreCase("stop")) currentState = STOP;
+    Serial.print("Received Serial Command: ");
+    Serial.println(command);
+
+    if (command.equalsIgnoreCase("left")) {
+      currentState = LEFT;
+    }
+    else if (command.equalsIgnoreCase("right")) {
+      currentState = RIGHT;
+    }
+    else if (command.equalsIgnoreCase("straight")) {
+      currentState = STRAIGHT;
+    }
+    else if (command.equalsIgnoreCase("stop")) {
+      currentState = STOP;
+    }
   }
 
   int pos = analogRead(PIN_SLIDE_POT_A);
   int target = MID_TARGET;
 
-  if (currentState == LEFT) target = LEFT_TARGET;
-  else if (currentState == RIGHT) target = RIGHT_TARGET;
-  else if (currentState == STRAIGHT) target = MID_TARGET;
+  if (currentState == LEFT) {
+    target = LEFT_TARGET;
+  }
+  else if (currentState == RIGHT) {
+    target = RIGHT_TARGET;
+  }
+  else if (currentState == STRAIGHT) {
+    target = MID_TARGET;
+  }
 
   bool steeringAtTarget = abs(pos - target) <= TOLERANCE;
 
+  // =============================
+  // Steering Closed-Loop Logic
+  // =============================
   if (currentState == STOP) {
     stopMotor();
     steeringAtTarget = true;
-  } else {
-    bool allowMoveRight = true;
-    bool allowMoveLeft = true;
+  }
+  else {
+    bool allowIncrease = true;
+    bool allowDecrease = true;
 
-    if (pos >= RIGHT_LIMIT) allowMoveRight = false;
-    if (pos <= LEFT_LIMIT) allowMoveLeft = false;
+    if (pos >= RIGHT_LIMIT) {
+      allowIncrease = false;
+    }
 
-    if (pos < target - TOLERANCE && allowMoveRight) {
-      moveRight();
+    if (pos <= LEFT_LIMIT) {
+      allowDecrease = false;
+    }
+
+    // IMPORTANT:
+    // This assumes moveBackward() increases the potentiometer value
+    // and moveForward() decreases the potentiometer value.
+    //
+    // If it moves the wrong way, swap moveBackward() and moveForward()
+    // in the two blocks below.
+
+    if (pos < target - TOLERANCE && allowIncrease) {
+      moveBackward();
       steeringAtTarget = false;
     }
-    else if (pos > target + TOLERANCE && allowMoveLeft) {
-      moveLeft();
+    else if (pos > target + TOLERANCE && allowDecrease) {
+      moveForward();
       steeringAtTarget = false;
     }
     else {
@@ -241,7 +308,12 @@ void loop() {
     }
   }
 
+  // =============================
+  // ESC Control
+  // Only spin rear wheels once steering is at target
+  // =============================
   int targetEscUs = MIN_US;
+
   if (currentState != STOP && steeringAtTarget) {
     targetEscUs = MAX_US;
   }
@@ -249,39 +321,63 @@ void loop() {
   if (millis() - lastEscUpdate >= 10) {
     if (currentEscUs < targetEscUs) {
       currentEscUs += 20;
-      if (currentEscUs > targetEscUs) currentEscUs = targetEscUs;
-    } else if (currentEscUs > targetEscUs) {
+      if (currentEscUs > targetEscUs) {
+        currentEscUs = targetEscUs;
+      }
+    }
+    else if (currentEscUs > targetEscUs) {
       currentEscUs -= 20;
-      if (currentEscUs < targetEscUs) currentEscUs = targetEscUs;
+      if (currentEscUs < targetEscUs) {
+        currentEscUs = targetEscUs;
+      }
     }
 
     writeESCus(currentEscUs);
     lastEscUpdate = millis();
   }
 
+  // =============================
+  // Debug Printing
+  // =============================
   if (millis() - lastPosCheck >= 200) {
     Serial.print("Steering Pos: ");
     Serial.print(pos);
     Serial.print(" | Delta: ");
     Serial.println(pos - lastPos);
+
     lastPos = pos;
     lastPosCheck = millis();
   }
 
   if (millis() - lastPrintTime >= 250) {
     Serial.print("State: ");
-    if (currentState == STOP) Serial.print("STOP");
-    else if (currentState == LEFT) Serial.print("LEFT");
-    else if (currentState == RIGHT) Serial.print("RIGHT");
-    else if (currentState == STRAIGHT) Serial.print("STRAIGHT");
+
+    if (currentState == STOP) {
+      Serial.print("STOP");
+    }
+    else if (currentState == LEFT) {
+      Serial.print("LEFT");
+    }
+    else if (currentState == RIGHT) {
+      Serial.print("RIGHT");
+    }
+    else if (currentState == STRAIGHT) {
+      Serial.print("STRAIGHT");
+    }
 
     Serial.print(" | Pos: ");
     Serial.print(pos);
+
     Serial.print(" | Target: ");
     Serial.print(target);
+
     Serial.print(" | AtTarget: ");
     Serial.print(steeringAtTarget ? "YES" : "NO");
-    Serial.print(" | ESC (us): ");
+
+    Serial.print(" | SteeringPWM: ");
+    Serial.print(steeringAtTarget || currentState == STOP ? 0 : motorSpeed);
+
+    Serial.print(" | ESC us: ");
     Serial.println(currentEscUs);
 
     lastPrintTime = millis();
