@@ -17,23 +17,15 @@
 
 // =============================
 // Steering Motor Pins
+// NO PWM FOR STEERING
 // =============================
 const int IN1 = 25;
 const int IN2 = 26;
 const int ENA = 27;
 
 // =============================
-// Steering PWM
-// Explicit LEDC channel to avoid ESC conflict
-// =============================
-const int STEERING_PWM_FREQ = 5000;
-const int STEERING_PWM_RESOLUTION = 8;
-const int STEERING_PWM_CHANNEL = 0;
-const int motorSpeed = 255;
-
-// =============================
 // ESC Settings
-// Explicit separate LEDC channel
+// ONLY PWM OUTPUT IN THIS CODE
 // =============================
 const int ESC_PIN = 14;
 const int MIN_US = 1000;
@@ -41,7 +33,7 @@ const int MAX_US = 2000;
 
 const int ESC_PWM_FREQ = 50;
 const int ESC_PWM_RESOLUTION = 16;
-const int ESC_PWM_CHANNEL = 1;
+const int ESC_PWM_CHANNEL = 0;
 
 int currentEscUs = MIN_US;
 unsigned long lastEscUpdate = 0;
@@ -77,6 +69,7 @@ bool oldDeviceConnected = false;
 uint32_t usToDuty(int us) {
   const uint32_t maxDuty = (1 << ESC_PWM_RESOLUTION) - 1;
   const uint32_t periodUs = 20000;
+
   return (uint32_t)((((uint64_t)us) * maxDuty) / periodUs);
 }
 
@@ -86,21 +79,17 @@ void writeESCus(int us) {
 
 // =============================
 // Steering Motor Functions
+// ENA is now only digital HIGH/LOW
 // =============================
-// Based on your working test code:
-// moveForward: IN1 HIGH, IN2 LOW
-// moveBackward: IN1 LOW, IN2 HIGH
-// Your old position logic called these "left/right", but the working code
-// proved these are the actual useful directions.
 
 void moveForward() {
-  ledcWriteChannel(STEERING_PWM_CHANNEL, motorSpeed);
+  digitalWrite(ENA, HIGH);
   digitalWrite(IN1, HIGH);
   digitalWrite(IN2, LOW);
 }
 
 void moveBackward() {
-  ledcWriteChannel(STEERING_PWM_CHANNEL, motorSpeed);
+  digitalWrite(ENA, HIGH);
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, HIGH);
 }
@@ -108,7 +97,7 @@ void moveBackward() {
 void stopMotor() {
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
-  ledcWriteChannel(STEERING_PWM_CHANNEL, 0);
+  digitalWrite(ENA, LOW);
 }
 
 // =============================
@@ -161,20 +150,14 @@ void setup() {
   Serial.begin(115200);
 
   pinMode(PIN_SLIDE_POT_A, INPUT);
+
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
-
-  // Steering PWM on explicit channel 0
-  ledcAttachChannel(
-    ENA,
-    STEERING_PWM_FREQ,
-    STEERING_PWM_RESOLUTION,
-    STEERING_PWM_CHANNEL
-  );
+  pinMode(ENA, OUTPUT);
 
   stopMotor();
 
-  // ESC PWM on explicit channel 1
+  // ESC PWM only
   ledcAttachChannel(
     ESC_PIN,
     ESC_PWM_FREQ,
@@ -287,9 +270,9 @@ void loop() {
       allowDecrease = false;
     }
 
-    // IMPORTANT:
-    // This assumes moveBackward() increases the potentiometer value
-    // and moveForward() decreases the potentiometer value.
+    // This assumes:
+    // moveBackward() increases potentiometer value
+    // moveForward() decreases potentiometer value
     //
     // If it moves the wrong way, swap moveBackward() and moveForward()
     // in the two blocks below.
@@ -321,12 +304,14 @@ void loop() {
   if (millis() - lastEscUpdate >= 10) {
     if (currentEscUs < targetEscUs) {
       currentEscUs += 20;
+
       if (currentEscUs > targetEscUs) {
         currentEscUs = targetEscUs;
       }
     }
     else if (currentEscUs > targetEscUs) {
       currentEscUs -= 20;
+
       if (currentEscUs < targetEscUs) {
         currentEscUs = targetEscUs;
       }
@@ -374,8 +359,8 @@ void loop() {
     Serial.print(" | AtTarget: ");
     Serial.print(steeringAtTarget ? "YES" : "NO");
 
-    Serial.print(" | SteeringPWM: ");
-    Serial.print(steeringAtTarget || currentState == STOP ? 0 : motorSpeed);
+    Serial.print(" | SteeringENA: ");
+    Serial.print(steeringAtTarget || currentState == STOP ? "LOW" : "HIGH");
 
     Serial.print(" | ESC us: ");
     Serial.println(currentEscUs);
