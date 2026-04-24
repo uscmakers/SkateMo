@@ -6,12 +6,12 @@
 // Steering Slide Pot & Targets
 // =============================
 #define PIN_SLIDE_POT_A 35
-#define RIGHT_TARGET 4025
-#define LEFT_TARGET 850
-#define MID_TARGET 2300
+#define RIGHT_TARGET 3600
+#define LEFT_TARGET 1500
+#define MID_TARGET 2900
 
-#define RIGHT_LIMIT 4094
-#define LEFT_LIMIT 700
+#define RIGHT_LIMIT 4000
+#define LEFT_LIMIT 1400
 #define TOLERANCE 25
 
 // =============================
@@ -85,13 +85,13 @@ void writeESCus(int us) {
 // Motor Functions
 // =============================
 void moveRight() {
-  digitalWrite(IN1, HIGH);
-  digitalWrite(IN2, LOW);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
 }
 
 void moveLeft() {
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, HIGH);
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW)
 }
 
 void stopMotor() {
