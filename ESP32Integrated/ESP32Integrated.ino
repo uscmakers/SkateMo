@@ -7,11 +7,11 @@
 // =============================
 #define PIN_SLIDE_POT_A 35
 
-#define RIGHT_TARGET 3600
-#define LEFT_TARGET 1500
-#define MID_TARGET 2900
+#define RIGHT_TARGET 4080
+#define LEFT_TARGET 1450
+#define MID_TARGET 2800
 
-#define RIGHT_LIMIT 4000
+#define RIGHT_LIMIT 4090
 #define LEFT_LIMIT 1400
 #define TOLERANCE 25
 
