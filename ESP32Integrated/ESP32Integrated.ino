@@ -297,7 +297,7 @@ void loop() {
   // =============================
   int targetEscUs = MIN_US;
 
-  if (currentState != STOP && steeringAtTarget) {
+  if (currentState != STOP) {
     targetEscUs = MAX_US;
   }
 
